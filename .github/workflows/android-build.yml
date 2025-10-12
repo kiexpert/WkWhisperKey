@@ -2,10 +2,10 @@ name: Build WkWhisperKey Android APK
 
 on:
   push:
-    branches: [ main, develop ]       # main/develop은 항상 자동 빌드
-  pull_request:                       # PR이 열린 모든 브랜치 자동 빌드
+    branches: [ main, develop ]         # main / develop 자동 빌드
+  pull_request:                         # PR 열린 브랜치 자동 빌드
     types: [opened, synchronize, reopened]
-  workflow_dispatch:                  # 그 외 브랜치는 수동 실행 허용
+  workflow_dispatch:                    # 기타 브랜치 수동 실행 허용
 
 jobs:
   build:
@@ -24,28 +24,49 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 📱 Install Android SDK
+      - name: 📱 Install Android SDK + NDK
         uses: android-actions/setup-android@v3
+        with:
+          ndk: 26.1.10909125
 
-      - name: 🧱 Prepare Gradle
+      # ⚡ 캐시 복원 단계 (빌드 속도 향상)
+      - name: ♻️ Restore Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 🔧 Gradle wrapper 자동 생성 (없을 때만)
+      - name: 🧱 Ensure Gradle Wrapper
         run: |
-          chmod +x ./android/gradlew
           cd android
-          ./gradlew wrapper --gradle-version 8.7
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper not found — creating..."
+            gradle wrapper
+          fi
+          chmod +x gradlew
 
-      - name: 🔧 Build Debug APK
+      - name: 🚀 Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon assembleDebug
 
-      - name: 📦 Upload APK artifact
+      # ⚙️ 캐시 저장 (성공 후 최신 캐시 갱신)
+      - name: ♻️ Save Gradle cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: 📦 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
-
-      - name: 🧹 Clean build cache
-        if: always()
-        run: |
-          cd android
-          ./gradlew clean
