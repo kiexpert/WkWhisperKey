@@ -79,11 +79,13 @@ kapt {
     }
 }
 
-// ✅ Gradle 8.9 완전호환 버전
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-    doFirst {
-        if (android != null && android.hasProperty("bootClasspath")) {
-            classpath = classpath.plus(files(android.bootClasspath))
+// ✅ Gradle 8.9 대응: classpath 가진 task만 안전하게 처리
+tasks.configureEach {
+    if (this.hasProperty("classpath")) {
+        doFirst {
+            if (android != null && android.hasProperty("bootClasspath")) {
+                classpath = classpath.plus(files(android.bootClasspath))
+            }
         }
     }
 }
