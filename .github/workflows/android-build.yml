@@ -29,6 +29,7 @@ jobs:
 
       # 3️⃣ Gradle Wrapper 캐시 복원
       - name: ♻️ Restore Gradle Wrapper
+        if: false
         id: wrappercache
         uses: actions/cache/restore@v4
         with:
