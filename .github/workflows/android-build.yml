@@ -27,14 +27,31 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # 3️⃣ Gradle Wrapper 캐시 복원
+      - name: ♻️ Restore Gradle Wrapper
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            gradlew
+            gradlew.bat
+            gradle/wrapper
+            ~/.gradle/wrapper
+          key: wrapper-${{ runner.os }}-8.7
+          restore-keys: |
+            wrapper-${{ runner.os }}-
+
+      # 4️⃣ Gradle Wrapper 없으면 자동 생성
       - name: 🧱 Ensure Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
             echo "Gradle wrapper not found — creating..."
             gradle wrapper --gradle-version 8.7
             chmod +x gradlew
+          else
+            echo "Gradle wrapper already exists."
           fi
 
+      # 5️⃣ Gradle Wrapper 캐시 저장 (환경변수 없이 즉시 연결)
       - name: 💾 Save Gradle Wrapper
         if: always() && !cancelled()
         uses: actions/cache/save@v4
