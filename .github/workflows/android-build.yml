@@ -26,6 +26,10 @@ jobs:
           java-version: 17
 
       - name: ♻️ Cache Android NDK
+        run: |
+          echo "::group::Cache Android NDK"
+          echo "Restoring cached NDK..."
+          echo "::endgroup::"
         uses: actions/cache@v4
         with:
           path: /usr/local/lib/android/sdk/ndk
@@ -37,7 +41,7 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           ndk: 26.1.10909125
-
+    
       - name: ♻️ Restore Gradle cache
         uses: actions/cache@v4
         with:
