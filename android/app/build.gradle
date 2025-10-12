@@ -79,10 +79,12 @@ kapt {
     }
 }
 
-afterEvaluate {
-    tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
-        // Gradle 8.9 이상에서는 += 대신 from() 사용
-        kaptClasspath.from(android.bootClasspath)
+// ✅ Gradle 8.9+ safe patch
+tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
+    doFirst {
+        if (android != null && android.hasProperty("bootClasspath")) {
+            classpath = classpath.plus(files(android.bootClasspath))
+        }
     }
 }
 
