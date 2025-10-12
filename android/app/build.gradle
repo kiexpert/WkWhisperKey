@@ -72,12 +72,16 @@ dependencies {
 kapt {
     correctErrorTypes = true
     useBuildCache = true
-    includeCompileClasspath = true   // ← 핵심
-    mapDiagnosticLocations = true
-
+    includeCompileClasspath = true
     arguments {
         arg("room.incremental", "true")
         arg("room.schemaLocation", "$projectDir/schemas".toString())
+    }
+}
+
+afterEvaluate {
+    tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
+        kaptClasspath += files(android.bootClasspath)
     }
 }
 
