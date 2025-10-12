@@ -1,24 +1,42 @@
-BSD 2-Clause License
+🔐 라이선스
 
-Copyright (c) 2025, Gi-il, Kim
+본 소프트웨어는 비상업적 및 연구 목적으로만 사용 가능합니다.
+상업적 배포, 판매, 임베딩 또는 라이선스 전환을 원하시면 Will Kim ( kiexpert@kivilab.co.kr ) 에게 별도 허가를 받으십시오.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+---
 
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
+👑 서명
 
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
+© 2025 Will Kim ( BitWisdom K  / DeepToHyde )
+All rights reserved.
+“Wk” prefix denotes Will Kim’s optimized branchless and cache-efficient design philosophy.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+---
+
+## 📄 **LICENSE (WkWhisperKey Non-Commercial License v1.0)**
+
+```text
+WkWhisperKey – Whisper-Based IME
+Copyright (c) 2025 Will Kim
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software and its documentation for educational, research, and
+non-commercial purposes only, provided that this notice and the
+following disclaimer appear in all copies.
+
+COMMERCIAL USE OR REDISTRIBUTION IS PROHIBITED WITHOUT WRITTEN
+PERMISSION FROM THE COPYRIGHT HOLDER.
+
+This software is provided "AS IS", without warranty of any kind,
+express or implied, including but not limited to the warranties of
+merchantability, fitness for a particular purpose and noninfringement.
+In no event shall the author or copyright holder be liable for any
+claim, damages or other liability arising from the use of this software.
+
+For commercial licensing, contact:  
+Will Kim  <kiexpert@kivilab.co.kr>
+
+---
+
+Note: Components derived from OpenAI Whisper or other open-source
+libraries retain their original licenses.
