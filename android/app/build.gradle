@@ -79,14 +79,11 @@ kapt {
     }
 }
 
-// ✅ Gradle 8.9+ safe patch
+// ✅ Gradle 8.9 Safe Hook
 tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
     doFirst {
         if (android != null && android.hasProperty("bootClasspath")) {
-            classpath = classpath.plus(files(android.bootClasspath))
+            kaptClasspath.from(android.bootClasspath)
         }
     }
 }
-
-
-
