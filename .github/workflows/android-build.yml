@@ -61,21 +61,21 @@ jobs:
             ~/.gradle/wrapper
           key: wrapper-${{ runner.os }}-8.7
 
-      # 6️⃣ NDK 캐시 복원
+      # 6️⃣ NDK 복원
       - name: ♻️ Restore NDK
         uses: actions/cache/restore@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/26.1.10909125
           key: ndk-${{ runner.os }}-26.1.10909125
-
+      
       # 7️⃣ NDK 없을 때만 설치
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK..."
-            sdkmanager "ndk;26.1.10909125"
+            echo "Installing NDK via cmdline-tools..."
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
           fi
-
+      
       # 8️⃣ NDK 캐시 저장
       - name: 💾 Save NDK
         if: success()
