@@ -5,5 +5,5 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
-include ':android:app'
 rootProject.name = "WkWhisperKey"
+include ':android:app'
