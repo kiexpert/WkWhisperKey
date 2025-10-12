@@ -72,9 +72,12 @@ dependencies {
 kapt {
     correctErrorTypes = true
     useBuildCache = true
+    includeCompileClasspath = true
     arguments {
         arg("room.incremental", "true")
         arg("room.schemaLocation", "$projectDir/schemas".toString())
     }
 }
+
+
 
