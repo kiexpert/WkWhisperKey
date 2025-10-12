@@ -1,19 +1,19 @@
-name: Build & Auto-Release WkWhisperKey Android APK
+name: Build & Auto-Release WkWhisperKey
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Android NDK + Kotlin Build
+    name: Kotlin Multiplatform + Android Build
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧩 Checkout repository
+      - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -36,19 +36,24 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 🔧 gradlew가 루트에 있다고 가정 (android/로 cd 불필요)
-      - name: 🧱 Prepare Gradle
-        run: chmod +x gradlew
+      # 🧱 gradlew 없으면 자동 생성
+      - name: 🧱 Ensure Gradle Wrapper
+        run: |
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper not found — creating..."
+            gradle wrapper --gradle-version 8.7
+          fi
+          chmod +x gradlew
 
-      - name: 🚀 Build Debug APK
+      - name: 🚀 Build Android Debug APK
         run: |
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
 
-      - name: 📦 Upload APK Artifact
+      - name: 📦 Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
@@ -61,9 +66,9 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
 
-      # 🧾 최신 태그 자동 계산 (wk-v0.1.###)
+      # 🔢 자동 태그 생성 (wk-v0.1.###)
       - name: 🔢 Compute next tag
         id: tag
         run: |
@@ -71,12 +76,10 @@ jobs:
           base=${last%.*}
           num=${last##*.}
           next=$((num + 1))
-          tagname="${base}.${next}"
-          echo "next_tag=$tagname" >> $GITHUB_OUTPUT
-          echo "Next tag: $tagname"
+          echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
+          echo "Next tag: ${base}.${next}"
 
-      # 🧱 Build 로그 tail 추출
-      - name: 📜 Extract tail of build log
+      - name: 📜 Tail build log
         id: taillog
         if: success()
         run: |
@@ -84,7 +87,6 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 🧩 자동 릴리스 생성
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -95,10 +97,9 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
-            - **Model:** wk_whisper_small_int8.engine
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### 🧱 Recent Build Log (tail)
+            ### 🧱 Recent Build Log
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
