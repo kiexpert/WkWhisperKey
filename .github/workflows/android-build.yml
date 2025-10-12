@@ -38,7 +38,7 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9-t2
+          key: wrapper-${{ runner.os }}-8.9-t3
           restore-keys: |
             wrapper-${{ runner.os }}-
 
@@ -63,7 +63,7 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9-t2
+          key: wrapper-${{ runner.os }}-8.9-t3
 
       # 6️⃣ NDK 캐시 복원
       - name: ♻️ Restore NDK
@@ -108,9 +108,15 @@ jobs:
         run: |
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Gradle build failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
 
       # 11️⃣ 빌드 산출물 업로드
       - name: 📦 Upload APK Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
