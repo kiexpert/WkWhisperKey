@@ -1,11 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'kotlin-kapt'
-}
-
-kotlin {
-    jvmToolchain(17)
+    // kapt 제거
 }
 
 android {
@@ -26,18 +22,14 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 
     buildFeatures {
         viewBinding true
         compose true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion '1.5.3'
-    }
+    composeOptions { kotlinCompilerExtensionVersion '1.5.3' }
 
     externalNativeBuild {
         cmake { path "src/main/cpp/CMakeLists.txt" }
@@ -50,15 +42,15 @@ dependencies {
     implementation "androidx.appcompat:appcompat:1.7.0"
     implementation "com.google.android.material:material:1.12.0"
 
-    // ✅ Room (for WhisperStore)
+    // ✅ Room — kapt → annotationProcessor로 교체
     implementation "androidx.room:room-runtime:2.6.1"
-    kapt "androidx.room:room-compiler:2.6.1"
+    annotationProcessor "androidx.room:room-compiler:2.6.1"
     implementation "androidx.room:room-ktx:2.6.1"
 
-    // ✅ WorkManager (for FineTuneWorker)
+    // ✅ WorkManager
     implementation "androidx.work:work-runtime-ktx:2.9.1"
 
-    // ✅ Compose UI (for WhisperVisualizer)
+    // ✅ Compose
     implementation "androidx.compose.ui:ui:1.7.3"
     implementation "androidx.compose.material:material:1.7.3"
     implementation "androidx.compose.ui:ui-tooling-preview:1.7.3"
@@ -67,38 +59,6 @@ dependencies {
 
     // ✅ Coroutine
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
-}
-
-kapt {
-    correctErrorTypes = true
-    useBuildCache = true
-    includeCompileClasspath = true
-    arguments {
-        arg("room.incremental", "true")
-        arg("room.schemaLocation", "$projectDir/schemas".toString())
-    }
-}
-
-// ✅ Gradle 8.9 대응: classpath 가진 task만 안전하게 처리
-tasks.configureEach {
-    if (this.hasProperty("classpath")) {
-        doFirst {
-            if (android != null && android.hasProperty("bootClasspath")) {
-                classpath = classpath.plus(files(android.bootClasspath))
-            }
-        }
-    }
-}
-
-afterEvaluate {
-    tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
-        doFirst {
-            if (android != null && android.hasProperty("bootClasspath")) {
-                def bootFiles = files(android.bootClasspath)
-                options.classpath = options.classpath.plus(bootFiles)
-            }
-        }
-    }
 }
 
 
