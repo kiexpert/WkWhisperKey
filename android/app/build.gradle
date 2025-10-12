@@ -90,5 +90,16 @@ tasks.configureEach {
     }
 }
 
+afterEvaluate {
+    tasks.withType(org.jetbrains.kotlin.gradle.internal.KaptWithoutKotlincTask).configureEach {
+        doFirst {
+            if (android != null && android.hasProperty("bootClasspath")) {
+                def bootFiles = files(android.bootClasspath)
+                options.classpath = options.classpath.plus(bootFiles)
+            }
+        }
+    }
+}
+
 
 
