@@ -37,7 +37,7 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9
+          key: wrapper-${{ runner.os }}-8.9-t0
           restore-keys: |
             wrapper-${{ runner.os }}-
 
@@ -62,7 +62,7 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9
+          key: wrapper-${{ runner.os }}-8.9-t0
 
       # 6️⃣ NDK 캐시 복원
       - name: ♻️ Restore NDK
