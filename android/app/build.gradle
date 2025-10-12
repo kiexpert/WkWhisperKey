@@ -72,7 +72,9 @@ dependencies {
 kapt {
     correctErrorTypes = true
     useBuildCache = true
-    includeCompileClasspath = true
+    includeCompileClasspath = true   // ← 핵심
+    mapDiagnosticLocations = true
+
     arguments {
         arg("room.incremental", "true")
         arg("room.schemaLocation", "$projectDir/schemas".toString())
