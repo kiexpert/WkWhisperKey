@@ -1,4 +1,4 @@
-name: Build & Auto-Release WkWhisperKey
+name: Build & Auto-Release WkWhisperKey Android APK
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧩 Checkout
+      - name: 🧩 Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -25,30 +25,24 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: ♻️ Cache Android NDK
-        uses: actions/cache@v4
+      # 1️⃣ NDK + Gradle 캐시 복원
+      - name: ♻️ Restore Gradle + NDK cache
+        uses: actions/cache/restore@v4
         with:
-          path: /usr/local/lib/android/sdk/ndk
-          key: ndk-${{ runner.os }}-${{ hashFiles('**/build.gradle*') }}
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            /usr/local/lib/android/sdk/ndk
+          key: buildcache-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
           restore-keys: |
-            ndk-${{ runner.os }}-
-      
+            buildcache-${{ runner.os }}-
+
       - name: 📱 Install Android SDK + NDK
         uses: android-actions/setup-android@v3
         with:
           ndk: 26.1.10909125
 
-      - name: ♻️ Restore Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      # 🧱 gradlew 없으면 자동 생성
+      # 2️⃣ gradlew 자동 생성 (루트 기준)
       - name: 🧱 Ensure Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
@@ -57,26 +51,30 @@ jobs:
           fi
           chmod +x gradlew
 
+      # 3️⃣ 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
 
-      - name: 📦 Upload APK
+      # 4️⃣ 빌드 산출물 업로드
+      - name: 📦 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      - name: ♻️ Save Gradle cache
+      # 5️⃣ 빌드 후 캐시 저장
+      - name: ♻️ Save Gradle + NDK cache
         if: success()
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
+            /usr/local/lib/android/sdk/ndk
+          key: buildcache-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
 
-      # 🔢 자동 태그 생성 (wk-v0.1.###)
+      # 6️⃣ 자동 태그 계산
       - name: 🔢 Compute next tag
         id: tag
         run: |
@@ -84,10 +82,12 @@ jobs:
           base=${last%.*}
           num=${last##*.}
           next=$((num + 1))
-          echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
-          echo "Next tag: ${base}.${next}"
+          tagname="${base}.${next}"
+          echo "next_tag=$tagname" >> $GITHUB_OUTPUT
+          echo "Next tag: $tagname"
 
-      - name: 📜 Tail build log
+      # 7️⃣ 로그 tail 추출
+      - name: 📜 Extract tail of build log
         id: taillog
         if: success()
         run: |
@@ -95,6 +95,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # 8️⃣ GitHub Release 생성
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -105,9 +106,10 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
+            - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### 🧱 Recent Build Log
+            ### 🧱 Recent Build Log (tail)
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
