@@ -2,9 +2,10 @@ name: Build WkWhisperKey Android APK
 
 on:
   push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]       # main/develop은 항상 자동 빌드
+  pull_request:                       # PR이 열린 모든 브랜치 자동 빌드
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:                  # 그 외 브랜치는 수동 실행 허용
 
 jobs:
   build:
