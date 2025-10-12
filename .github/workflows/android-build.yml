@@ -14,46 +14,33 @@ jobs:
 
     steps:
       # 1️⃣ 저장소 체크아웃
-      - name: 🧩 Checkout repository
+      - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 환경
+      # 2️⃣ JDK 설정
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ NDK 캐시 복원 (Save 없음)
-      - name: ♻️ Restore NDK cache
-        uses: actions/cache/restore@v4
-        with:
-          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
-          key: ndk-${{ runner.os }}-26.1.10909125
-          restore-keys: |
-            ndk-${{ runner.os }}-
-
-      # 4️⃣ Android SDK + NDK 설치 (없을 경우만)
-      - name: 📱 Install Android SDK + NDK
-        uses: android-actions/setup-android@v3
-        with:
-          ndk: 26.1.10909125
-
-      # 5️⃣ Gradle 캐시 복원
-      - name: ♻️ Restore Gradle cache
+      # 3️⃣ Gradle Wrapper 캐시 복원
+      - name: ♻️ Restore Gradle Wrapper
         uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.gradle/caches
+            gradlew
+            gradlew.bat
+            gradle/wrapper
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
+          key: wrapper-${{ runner.os }}-8.7
           restore-keys: |
-            gradle-${{ runner.os }}-
+            wrapper-${{ runner.os }}-
 
-      # 6️⃣ gradlew 자동 생성
+      # 4️⃣ Gradle Wrapper 없으면 생성
       - name: 🧱 Ensure Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
@@ -62,42 +49,85 @@ jobs:
           fi
           chmod +x gradlew
 
-      # 7️⃣ 빌드 실행
+      # 5️⃣ Gradle Wrapper 캐시 저장
+      - name: 💾 Save Gradle Wrapper
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            gradlew
+            gradlew.bat
+            gradle/wrapper
+            ~/.gradle/wrapper
+          key: wrapper-${{ runner.os }}-8.7
+
+      # 6️⃣ NDK 캐시 복원
+      - name: ♻️ Restore NDK
+        uses: actions/cache/restore@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
+          key: ndk-${{ runner.os }}-26.1.10909125
+
+      # 7️⃣ NDK 없을 때만 설치
+      - name: 📱 Ensure NDK
+        run: |
+          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
+            echo "Installing NDK..."
+            sdkmanager "ndk;26.1.10909125"
+          fi
+
+      # 8️⃣ NDK 캐시 저장
+      - name: 💾 Save NDK
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
+          key: ndk-${{ runner.os }}-26.1.10909125
+
+      # 9️⃣ Gradle 의존성 캐시 복원
+      - name: ♻️ Restore Gradle Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # 🔟 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
 
-      # 8️⃣ 빌드 산출물 업로드
-      - name: 📦 Upload APK Artifact
+      # 11️⃣ 빌드 산출물 업로드
+      - name: 📦 Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 9️⃣ Gradle 캐시 저장
-      - name: ♻️ Save Gradle cache
+      # 12️⃣ Gradle 캐시 저장
+      - name: 💾 Save Gradle Cache
         if: success()
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.gradle/caches
-            ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
 
-      # 🔢 10️⃣ 자동 태그 계산
-      - name: 🔢 Compute next tag
+      # 13️⃣ 자동 태그 계산
+      - name: 🔢 Compute Next Tag
         id: tag
         run: |
           last=$(git describe --tags --abbrev=0 2>/dev/null || echo "wk-v0.1.0")
           base=${last%.*}
           num=${last##*.}
           next=$((num + 1))
-          tagname="${base}.${next}"
-          echo "next_tag=$tagname" >> $GITHUB_OUTPUT
-          echo "Next tag: $tagname"
+          echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
+          echo "Next tag: ${base}.${next}"
 
-      # 📜 11️⃣ 로그 tail 추출
-      - name: 📜 Extract tail of build log
+      # 14️⃣ 로그 tail 추출
+      - name: 📜 Extract Tail of Build Log
         id: taillog
         if: success()
         run: |
@@ -105,7 +135,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 🚀 12️⃣ GitHub Release 생성
+      # 15️⃣ GitHub Release 자동 생성
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -119,7 +149,7 @@ jobs:
             - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### 🧱 Recent Build Log (tail)
+            ### 🧱 Recent Build Log
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
