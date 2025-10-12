@@ -20,7 +20,7 @@ jobs:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 설정
+      # 2️⃣ JDK 환경
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -29,6 +29,7 @@ jobs:
 
       # 3️⃣ Gradle Wrapper 캐시 복원
       - name: ♻️ Restore Gradle Wrapper
+        id: wrappercache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -36,24 +37,24 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.7
+          key: wrapper-${{ runner.os }}-8.9
           restore-keys: |
             wrapper-${{ runner.os }}-
 
-      # 4️⃣ Gradle Wrapper 없으면 자동 생성
+      # 4️⃣ Gradle Wrapper 없으면 생성
       - name: 🧱 Ensure Gradle Wrapper
         run: |
           if [ ! -f gradlew ]; then
             echo "Gradle wrapper not found — creating..."
-            gradle wrapper --gradle-version 8.7
+            gradle wrapper --gradle-version 8.9
             chmod +x gradlew
           else
             echo "Gradle wrapper already exists."
           fi
 
-      # 5️⃣ Gradle Wrapper 캐시 저장 (환경변수 없이 즉시 연결)
+      # 5️⃣ Gradle Wrapper 캐시 저장 (cache-hit 시 스킵)
       - name: 💾 Save Gradle Wrapper
-        if: always() && !cancelled()
+        if: steps.wrappercache.outputs.cache-hit != 'true' && success()
         uses: actions/cache/save@v4
         with:
           path: |
@@ -61,26 +62,31 @@ jobs:
             gradlew.bat
             gradle/wrapper
             ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.7
+          key: wrapper-${{ runner.os }}-8.9
 
-      # 6️⃣ NDK 복원
+      # 6️⃣ NDK 캐시 복원
       - name: ♻️ Restore NDK
+        id: ndkcache
         uses: actions/cache/restore@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/26.1.10909125
           key: ndk-${{ runner.os }}-26.1.10909125
-      
+          restore-keys: |
+            ndk-${{ runner.os }}-
+
       # 7️⃣ NDK 없을 때만 설치
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
             echo "Installing NDK via cmdline-tools..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+          else
+            echo "NDK already installed."
           fi
-      
-      # 8️⃣ NDK 캐시 저장
+
+      # 8️⃣ NDK 캐시 저장 (cache-hit 시 스킵)
       - name: 💾 Save NDK
-        if: success()
+        if: steps.ndkcache.outputs.cache-hit != 'true' && success()
         uses: actions/cache/save@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/26.1.10909125
@@ -88,33 +94,33 @@ jobs:
 
       # 9️⃣ Gradle 의존성 캐시 복원
       - name: ♻️ Restore Gradle Cache
+        id: gradlecache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.gradle/caches
+          path: ~/.gradle/caches
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # 🔟 빌드 실행
+      # 🔟 빌드 실행 (에러 시 즉시 중단)
       - name: 🚀 Build Android Debug APK
         run: |
+          set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
 
       # 11️⃣ 빌드 산출물 업로드
-      - name: 📦 Upload APK
+      - name: 📦 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 12️⃣ Gradle 캐시 저장
+      # 12️⃣ Gradle 캐시 저장 (cache-hit 시 스킵)
       - name: 💾 Save Gradle Cache
-        if: success()
+        if: steps.gradlecache.outputs.cache-hit != 'true' && success()
         uses: actions/cache/save@v4
         with:
-          path: |
-            ~/.gradle/caches
+          path: ~/.gradle/caches
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
 
       # 13️⃣ 자동 태그 계산
@@ -148,6 +154,7 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
+            - **Gradle:** 8.9
             - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
