@@ -1,6 +1,9 @@
-# 🧩 WkWhisperKey  
+# 🧩 WkWhisperKey
 ### Whisper-Based AI Keyboard — by Will Kim (윌김)
 
+![License: WkWhisperKey NC](https://img.shields.io/badge/license-WkWhisperKey--NonCommercial-blue)
+![Build](https://img.shields.io/github/actions/workflow/status/kiexpert/WkWhisperKey/android-build.yml?label=Android%20Build)
+![Platform](https://img.shields.io/badge/platform-Android%20|%20iOS%20|%20Desktop-lightgrey)
 ---
 
 > “속삭임만으로 조용히 명령하고 입력하는 세상의 첫 인터페이스”
