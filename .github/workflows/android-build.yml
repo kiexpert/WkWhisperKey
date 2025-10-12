@@ -16,14 +16,14 @@ jobs:
       - name: 🧩 Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 👈 이전 태그도 가져오기 (버전 자동 계산용)
+          fetch-depth: 0
           submodules: true
 
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: 17
 
       - name: 📱 Install Android SDK + NDK
         uses: android-actions/setup-android@v3
@@ -40,19 +40,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: 🧱 Ensure Gradle Wrapper
-        run: |
-          cd android
-          if [ ! -f gradlew ]; then
-            echo "Gradle wrapper not found — creating..."
-            gradle wrapper
-          fi
-          chmod +x gradlew
+      # 🔧 gradlew가 루트에 있다고 가정 (android/로 cd 불필요)
+      - name: 🧱 Prepare Gradle
+        run: chmod +x gradlew
 
       - name: 🚀 Build Debug APK
         run: |
-          cd android
-          ./gradlew --no-daemon assembleDebug | tee ../build.log
+          ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
 
       - name: 📦 Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -81,6 +75,7 @@ jobs:
           echo "next_tag=$tagname" >> $GITHUB_OUTPUT
           echo "Next tag: $tagname"
 
+      # 🧱 Build 로그 tail 추출
       - name: 📜 Extract tail of build log
         id: taillog
         if: success()
@@ -95,7 +90,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.next_tag }}
-          name: "WkWhisperKey ${ { steps.tag.outputs.next_tag } }"
+          name: "WkWhisperKey ${{ steps.tag.outputs.next_tag }}"
           body: |
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
