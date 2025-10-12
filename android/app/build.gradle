@@ -68,3 +68,13 @@ dependencies {
     // ✅ Coroutine
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
 }
+
+kapt {
+    correctErrorTypes = true
+    useBuildCache = true
+    arguments {
+        arg("room.incremental", "true")
+        arg("room.schemaLocation", "$projectDir/schemas".toString())
+    }
+}
+
