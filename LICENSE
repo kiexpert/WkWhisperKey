@@ -1,22 +1,20 @@
 🔐 라이선스
 
-본 소프트웨어는 비상업적 및 연구 목적으로만 사용 가능합니다.
-상업적 배포, 판매, 임베딩 또는 라이선스 전환을 원하시면 Will Kim ( kiexpert@kivilab.co.kr ) 에게 별도 허가를 받으십시오.
+본 소프트웨어는 비상업적 및 연구 목적으로만 사용 가능합니다.  
+상업적 배포, 판매, 임베딩 또는 라이선스 전환을 원하시면  
+Will Kim (kiexpert@kivilab.co.kr) 에게 별도 허가를 받으십시오.
 
 ---
 
 👑 서명
 
-© 2025 Will Kim ( BitWisdom K  / DeepToHyde )
-All rights reserved.
+© 2025 Will Kim (BitWisdom K / DeepToHyde)  
+All rights reserved.  
 “Wk” prefix denotes Will Kim’s optimized branchless and cache-efficient design philosophy.
 
 ---
 
-## 📄 **LICENSE (WkWhisperKey Non-Commercial License v1.0)**
-
-```text
-WkWhisperKey – Whisper-Based IME
+WkWhisperKey – Whisper-Based IME  
 Copyright (c) 2025 Will Kim
 
 Permission is hereby granted to use, copy, modify, and distribute this
