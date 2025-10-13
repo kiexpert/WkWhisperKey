@@ -1,3 +1,5 @@
+package ai.willkim.wkwhisperkey.engine
+
 class WhisperEngine {
     var onResult: ((String, ByteArray) -> Unit)? = null
     private var capturing = false
