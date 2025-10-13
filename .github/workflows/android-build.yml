@@ -52,12 +52,12 @@ jobs:
             echo "NDK already installed."
           fi
 
-      - name: 🧹 Full Clean Build Environment
+      - name: 🧹 Clean Ghost Files Only
         run: |
-          echo "Cleaning all build artifacts and Gradle caches..."
-          rm -rf ~/.gradle/caches
-          rm -rf android/app/build
-          rm -rf android/.cxx
+          echo "🧽 Removing untracked and deleted-branch ghost files..."
+          # 안전 모드: .gitignore 에 포함된 빌드 산출물 제외
+          git clean -fdX
+          echo "✅ Removed files not tracked by git, caches kept."
 
       # 6️⃣ NDK 캐시 저장 (처음 설치된 경우만)
       - name: 💾 Save NDK (only if cache missing)
