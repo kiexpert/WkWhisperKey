@@ -2,30 +2,32 @@ package ai.willkim.wkwhisperkey;
 
 import android.content.Context;
 
+import androidx.room.Database;
 import androidx.room.Room;
+import androidx.room.RoomDatabase;
 
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+// Room Database definition
+@Database(entities = {WhisperData.class}, version = 1, exportSchema = false)
+public abstract class WhisperDB extends RoomDatabase {
 
-public class WhisperStore {
-    private static WhisperDB db;
-    private static final ExecutorService ioPool = Executors.newSingleThreadExecutor();
+    // DAO accessor
+    public abstract WhisperDao dao();
 
-    private static WhisperDB getDB(Context ctx) {
-        if (db == null)
-            db = Room.databaseBuilder(ctx, WhisperDB.class, "whisper.db").build();
-        return db;
-    }
+    // Singleton instance
+    private static volatile WhisperDB INSTANCE;
 
-    public static void insert(byte[] wave, String text) {
-        ioPool.execute(() -> {
-            WhisperData data = new WhisperData(0, wave, text);
-            getDB(AppContext.get()).dao().insert(data);
-        });
-    }
-
-    public static List<WhisperData> sampleBatch(int n) {
-        return getDB(AppContext.get()).dao().sample(n);
+    public static WhisperDB get(Context context) {
+        if (INSTANCE == null) {
+            synchronized (WhisperDB.class) {
+                if (INSTANCE == null) {
+                    INSTANCE = Room.databaseBuilder(
+                            context.getApplicationContext(),
+                            WhisperDB.class,
+                            "whisper.db"
+                    ).build();
+                }
+            }
+        }
+        return INSTANCE;
     }
 }
