@@ -13,59 +13,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ 저장소 체크아웃
       - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 환경
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle Wrapper 캐시 복원
-      - name: ♻️ Restore Gradle Wrapper
-        if: false
-        id: wrappercache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            gradlew
-            gradlew.bat
-            gradle/wrapper
-            ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9-t4
-          restore-keys: |
-            wrapper-${{ runner.os }}-
-
-      # 4️⃣ Gradle Wrapper 없으면 생성
-      - name: 🧱 Ensure Gradle Wrapper
+      # 🧱 Gradle Wrapper 생성 및 System Gradle 비활성화
+      - name: 🧱 Ensure Gradle Wrapper (Force Gradle 8.7)
         run: |
+          echo "Disabling system Gradle..."
+          sudo mv /usr/bin/gradle /usr/bin/gradle.disabled || true
           if [ ! -f gradlew ]; then
             echo "Gradle wrapper not found — creating..."
-            gradle wrapper --gradle-version 8.9
-            chmod +x gradlew
-          else
-            echo "Gradle wrapper already exists."
+            gradle wrapper --gradle-version 8.7
           fi
+          chmod +x gradlew
+          echo "Gradle Wrapper version:"
+          ./gradlew -v | head -n 3
 
-      # 5️⃣ Gradle Wrapper 캐시 저장 (cache-hit 시 스킵)
-      - name: 💾 Save Gradle Wrapper
-        if: steps.wrappercache.outputs.cache-hit != 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            gradlew
-            gradlew.bat
-            gradle/wrapper
-            ~/.gradle/wrapper
-          key: wrapper-${{ runner.os }}-8.9-t4
-
-      # 6️⃣ NDK 캐시 복원
       - name: ♻️ Restore NDK
         id: ndkcache
         uses: actions/cache/restore@v4
@@ -75,7 +47,6 @@ jobs:
           restore-keys: |
             ndk-${{ runner.os }}-
 
-      # 7️⃣ NDK 없을 때만 설치
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
@@ -85,15 +56,6 @@ jobs:
             echo "NDK already installed."
           fi
 
-      # 8️⃣ NDK 캐시 저장 (cache-hit 시 스킵)
-      - name: 💾 Save NDK
-        if: steps.ndkcache.outputs.cache-hit != 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
-          key: ndk-${{ runner.os }}-26.1.10909125
-
-      # 9️⃣ Gradle 의존성 캐시 복원
       - name: ♻️ Restore Gradle Cache
         id: gradlecache
         uses: actions/cache/restore@v4
@@ -103,7 +65,6 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # 🔟 빌드 실행 (에러 시 즉시 중단)
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
@@ -114,7 +75,6 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 11️⃣ 빌드 산출물 업로드
       - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -122,15 +82,12 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 12️⃣ Gradle 캐시 저장 (cache-hit 시 스킵)
       - name: 💾 Save Gradle Cache
-        # if: steps.gradlecache.outputs.cache-hit != 'true' # && success()
         uses: actions/cache/save@v4
         with:
           path: ~/.gradle/caches
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
 
-      # 13️⃣ 자동 태그 계산
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -141,7 +98,6 @@ jobs:
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
           echo "Next tag: ${base}.${next}"
 
-      # 14️⃣ 로그 tail 추출
       - name: 📜 Extract Tail of Build Log
         id: taillog
         if: success()
@@ -150,7 +106,6 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 15️⃣ GitHub Release 자동 생성
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -161,7 +116,7 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
-            - **Gradle:** 8.9
+            - **Gradle:** 8.7
             - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
