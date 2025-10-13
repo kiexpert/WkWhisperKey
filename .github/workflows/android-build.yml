@@ -52,6 +52,23 @@ jobs:
             echo "NDK already installed."
           fi
 
+      - name: 📱 Ensure NDK
+        run: |
+          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
+            echo "Installing NDK via sdkmanager..."
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+            ./gradlew clean
+          else
+            echo "NDK already installed."
+          fi
+
+      - name: 🧹 Full Clean Build Environment
+        run: |
+          echo "Cleaning all build artifacts and Gradle caches..."
+          rm -rf ~/.gradle/caches
+          rm -rf android/app/build
+          rm -rf android/.cxx
+
       # 6️⃣ NDK 캐시 저장 (처음 설치된 경우만)
       - name: 💾 Save NDK (only if cache missing)
         if: steps.ndkcache.outputs.cache-hit != 'true' && success()
