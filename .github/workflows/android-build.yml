@@ -47,9 +47,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/26.1.10909125
-          key: ndk-${{ runner.os }}-26.1.10909125
+          key: ndk-${{ runner.os }}-t1-26.1.10909125
           restore-keys: |
-            ndk-${{ runner.os }}-
+            ndk-${{ runner.os }}-t1-
 
       - name: 📱 Ensure NDK
         run: |
