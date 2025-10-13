@@ -1,8 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="ai.willkim.wkwhisperkey">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <application android:label="WkWhisperKey">
     <service
-      android:name=".ime.WkWhisperKeyIME"
+      android:name=".WkWhisperKeyIME"
       android:permission="android.permission.BIND_INPUT_METHOD"
       android:exported="true">
       <intent-filter>
