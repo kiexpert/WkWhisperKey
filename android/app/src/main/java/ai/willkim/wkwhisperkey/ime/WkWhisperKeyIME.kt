@@ -5,6 +5,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.TextView
 import kotlinx.coroutines.*
+import ai.willkim.wkwhisperkey.R        // ✅ 추가
 import ai.willkim.wkwhisperkey.audio.WkAudioCapture
 import ai.willkim.wkwhisperkey.core.WkWhisperEngine
 
