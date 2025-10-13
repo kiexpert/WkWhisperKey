@@ -1,7 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    // kapt 제거
+    id 'kotlin-kapt'
 }
 
 android {
@@ -22,14 +22,18 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
 
     buildFeatures {
         viewBinding true
         compose true
     }
 
-    composeOptions { kotlinCompilerExtensionVersion '1.5.3' }
+    composeOptions {
+        kotlinCompilerExtensionVersion '1.5.3'
+    }
 
     externalNativeBuild {
         cmake { path "src/main/cpp/CMakeLists.txt" }
@@ -37,14 +41,14 @@ android {
 }
 
 dependencies {
-    // ✅ 기본 AndroidX
+    // ✅ AndroidX Core
     implementation "androidx.core:core-ktx:1.13.1"
     implementation "androidx.appcompat:appcompat:1.7.0"
     implementation "com.google.android.material:material:1.12.0"
 
-    // ✅ Room — kapt → annotationProcessor로 교체
+    // ✅ Room
     implementation "androidx.room:room-runtime:2.6.1"
-    annotationProcessor "androidx.room:room-compiler:2.6.1"
+    kapt "androidx.room:room-compiler:2.6.1"
     implementation "androidx.room:room-ktx:2.6.1"
 
     // ✅ WorkManager
@@ -57,7 +61,7 @@ dependencies {
     debugImplementation "androidx.compose.ui:ui-tooling:1.7.3"
     implementation "androidx.activity:activity-compose:1.9.2"
 
-    // ✅ Coroutine
+    // ✅ Coroutines
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0"
 }
 
