@@ -1,4 +1,4 @@
-package ai.willkim.wkwhisperkey
+package ai.willkim.wkwhisperkey.ime
 
 import android.inputmethodservice.InputMethodService
 import android.view.View
