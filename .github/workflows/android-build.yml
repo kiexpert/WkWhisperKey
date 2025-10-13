@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle 래퍼 초기화 스크립트 실행
+      # 3️⃣ Gradle 래퍼 초기화
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
@@ -41,22 +41,26 @@ jobs:
           restore-keys: |
             ndk-${{ runner.os }}-t1-
 
-      # 5️⃣ NDK 최신화 및 클린 빌드 준비
-      - name: 📱 Ensure NDK + Clean
+      # 5️⃣ NDK 확인 및 설치 (없을 때만)
+      - name: 📱 Ensure NDK
         run: |
-          echo "🧹 Running full clean + NDK update check..."
-          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-          ./gradlew clean
+          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
+            echo "Installing NDK via sdkmanager..."
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+            ./gradlew clean
+          else
+            echo "NDK already installed."
+          fi
 
-      # 6️⃣ NDK 캐시 저장 (빌드 전에 — 항상 실행)
-      - name: 💾 Save NDK (Pre-Build)
-        if: always()
+      # 6️⃣ NDK 캐시 저장 (처음 설치된 경우만)
+      - name: 💾 Save NDK (only if cache missing)
+        if: steps.ndkcache.outputs.cache-hit != 'true' && success()
         uses: actions/cache/save@v4
         with:
           path: /usr/local/lib/android/sdk/ndk/26.1.10909125
           key: ndk-${{ runner.os }}-t1-26.1.10909125
 
-      # 7️⃣ Gradle 캐시 복원 (선택적)
+      # 7️⃣ Gradle 캐시 복원 (비활성화 중)
       - name: ♻️ Restore Gradle Cache
         if: false
         id: gradlecache
@@ -67,10 +71,11 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      # 8️⃣ 빌드 실행
+      # 8️⃣ 클린 + 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
+          ./gradlew clean
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
@@ -86,7 +91,7 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 🔟 태그 계산
+      # 🔟 자동 태그 계산
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -106,7 +111,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 12️⃣ GitHub Release 자동 생성 (main 브랜치 전용)
+      # 12️⃣ GitHub Release 자동 생성 (main 전용)
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
