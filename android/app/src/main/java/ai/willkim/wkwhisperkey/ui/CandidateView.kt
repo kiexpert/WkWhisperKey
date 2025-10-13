@@ -1,4 +1,4 @@
-package ai.willkim.wkwhisperkey
+package ai.willkim.wkwhisperkey.ui
 
 import android.content.Context
 import android.graphics.Color
