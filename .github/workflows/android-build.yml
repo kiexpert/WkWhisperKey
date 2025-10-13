@@ -25,8 +25,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: 🧱 Initialize Gradle Wrapper
+        run: bash scripts/init-gradle.sh
+  
       # 🧱 Gradle Wrapper 생성 및 System Gradle 비활성화
       - name: 🧱 Ensure Gradle Wrapper (Force Gradle 8.7)
+        if: false
         run: |
           echo "Disabling system Gradle..."
           sudo mv /usr/bin/gradle /usr/bin/gradle.disabled || true
