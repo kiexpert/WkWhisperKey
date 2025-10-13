@@ -69,9 +69,10 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      - name: 🚀 Build Android Debug APK
+      - name: 🚀 Clean & Build Android Debug APK
         run: |
           set -e
+          ./gradlew clean
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
