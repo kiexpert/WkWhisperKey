@@ -52,16 +52,6 @@ jobs:
             echo "NDK already installed."
           fi
 
-      - name: 📱 Ensure NDK
-        run: |
-          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK via sdkmanager..."
-            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-            ./gradlew clean
-          else
-            echo "NDK already installed."
-          fi
-
       - name: 🧹 Full Clean Build Environment
         run: |
           echo "Cleaning all build artifacts and Gradle caches..."
