@@ -56,11 +56,13 @@ jobs:
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
             echo "Installing NDK via cmdline-tools..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+            ./gradlew clean
           else
             echo "NDK already installed."
           fi
 
       - name: ♻️ Restore Gradle Cache
+        if: false
         id: gradlecache
         uses: actions/cache/restore@v4
         with:
@@ -88,6 +90,7 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
 
       - name: 💾 Save Gradle Cache
+        if: false
         uses: actions/cache/save@v4
         with:
           path: ~/.gradle/caches
