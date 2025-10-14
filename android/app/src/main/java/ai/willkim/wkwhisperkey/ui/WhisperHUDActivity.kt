@@ -17,6 +17,12 @@ class WhisperHUDActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
+                LogVisualizerOverlay()
+            }
+        }
+        
+        if (false) setContent {
+            MaterialTheme {
                 val vm: WhisperViewModel = viewModel()
                 val uiState by vm.state.collectAsState()
 
