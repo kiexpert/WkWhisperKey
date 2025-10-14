@@ -40,7 +40,7 @@ fun LogVisualizerOverlay(modifier: Modifier = Modifier) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF202020).copy(alpha = 0.6f))
+                    .background(Color(0xFF121212))
                     .padding(6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -56,6 +56,7 @@ fun LogVisualizerOverlay(modifier: Modifier = Modifier) {
                         },
                         color = if (isSel) Color(0xFF00FF88) else Color.LightGray,
                         fontSize = 12.sp,
+                        lineHeight = 14.sp,
                         modifier = Modifier.clickable { selected = key }
                     )
                 }
