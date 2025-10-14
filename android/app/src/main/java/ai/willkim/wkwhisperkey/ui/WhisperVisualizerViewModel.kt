@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlin.math.*
 import androidx.compose.ui.graphics.Color
+import ai.willkim.wkwhisperkey.audio.WkAudioInput
 
 data class SpeakerData(
     val id: Int,
