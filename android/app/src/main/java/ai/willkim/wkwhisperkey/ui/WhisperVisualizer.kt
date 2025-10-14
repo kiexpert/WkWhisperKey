@@ -1,46 +1,36 @@
 package ai.willkim.wkwhisperkey.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import kotlin.math.*
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.unit.sp
 
 @Composable
-fun WhisperVisualizer(speakers: List<SpeakerData>) {
-    Canvas(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        val center = Offset(size.width / 2, size.height / 2)
-        val radius = size.minDimension / 3
-
-        for (s in speakers) {
-            val pos = Offset(
-                center.x + cos(s.angle) * radius,
-                center.y + sin(s.angle) * radius
-            )
-            val len = 60f + s.energy * 200f
-
-            drawLine(
-                color = s.color,
-                start = center,
-                end = pos.copy(y = pos.y - len / 2),
-                strokeWidth = 6f
-            )
-            drawCircle(color = s.color, radius = 14f, center = pos)
-            drawIntoCanvas {
-                it.nativeCanvas.drawText(
-                    "ID ${s.id}",
-                    pos.x - 20f,
-                    pos.y + 40f,
-                    Paint().apply {
-                        color = android.graphics.Color.WHITE
-                        textSize = 28f
-                    }
+fun WhisperVisualizer(
+    energyMap: List<Float> = listOf(0.2f, 0.5f, 0.9f),
+    speakers: List<String> = listOf("A", "B", "C")
+) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        drawIntoCanvas { canvas ->
+            val paint = android.graphics.Paint().apply {
+                color = android.graphics.Color.WHITE
+                textSize = 36f
+                isAntiAlias = true
+            }
+            speakers.forEachIndexed { i, s ->
+                val x = 80f
+                val y = 100f + i * 120f
+                val width = energyMap.getOrNull(i)?.times(600f) ?: 0f
+                drawRect(
+                    color = Color.Green.copy(alpha = 0.4f),
+                    topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                    size = androidx.compose.ui.geometry.Size(width, 60f)
                 )
+                canvas.nativeCanvas.drawText("Speaker $s", x, y - 10f, paint)
             }
         }
     }
