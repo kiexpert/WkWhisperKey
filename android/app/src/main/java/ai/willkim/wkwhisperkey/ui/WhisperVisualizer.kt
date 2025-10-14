@@ -1,6 +1,7 @@
 package ai.willkim.wkwhisperkey.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -14,23 +15,33 @@ fun WhisperVisualizer(
     energyMap: List<Float> = listOf(0.2f, 0.5f, 0.9f),
     speakers: List<String> = listOf("A", "B", "C")
 ) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF121212)) // ✅ 진한 다크 배경
+    ) {
         drawIntoCanvas { canvas ->
             val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.WHITE
-                textSize = 36f
+                color = android.graphics.Color.CYAN // ✅ 밝은 대비 색상
+                textSize = 42f
                 isAntiAlias = true
             }
+
             speakers.forEachIndexed { i, s ->
                 val x = 80f
-                val y = 100f + i * 120f
-                val width = energyMap.getOrNull(i)?.times(600f) ?: 0f
+                val y = 150f + i * 140f
+                val energy = energyMap.getOrNull(i)?.coerceIn(0f, 1f) ?: 0f
+                val width = 800f * energy
+
+                // ✅ 에너지 막대
                 drawRect(
-                    color = Color.Green.copy(alpha = 0.4f),
+                    color = Color.Green.copy(alpha = 0.5f),
                     topLeft = androidx.compose.ui.geometry.Offset(x, y),
-                    size = androidx.compose.ui.geometry.Size(width, 60f)
+                    size = androidx.compose.ui.geometry.Size(width, 70f)
                 )
-                canvas.nativeCanvas.drawText("Speaker $s", x, y - 10f, paint)
+
+                // ✅ 텍스트
+                canvas.nativeCanvas.drawText("Speaker $s: %.2f".format(energy), x, y - 10f, paint)
             }
         }
     }
