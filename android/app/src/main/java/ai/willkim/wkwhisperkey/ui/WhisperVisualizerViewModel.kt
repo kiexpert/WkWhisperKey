@@ -38,4 +38,28 @@ class WhisperVisualizerViewModel : ViewModel() {
         for (v in a) e += v * v
         return sqrt(e / a.size)
     }
+
+    init {
+        viewModelScope.launch {
+            var tick = 0
+            while (true) {
+                // 가짜 화자 데이터 (시각적 테스트용)
+                val fakeSpeakers = List(3) {
+                    SpeakerData(
+                        id = it,
+                        energy = ((sin(tick / 10f + it) + 1f) / 2f).coerceIn(0f, 1f),
+                        angle = (it * 120f + tick) % 360f,
+                        color = when (it) {
+                            0 -> Color(0xFF00FF88)
+                            1 -> Color(0xFF4488FF)
+                            else -> Color(0xFFFF4444)
+                        }
+                    )
+                }
+                _speakers.value = fakeSpeakers
+                tick++
+                kotlinx.coroutines.delay(100)
+            }
+        }
+    }
 }
