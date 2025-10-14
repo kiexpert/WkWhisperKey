@@ -45,16 +45,16 @@ class WhisperVisualizerViewModel : ViewModel() {
     val energy: StateFlow<Float> = _energy
 
     init {
-            viewModelScope.launch {
-                        viewModelScope.launch {
-                audio.energy.collect { e ->
-                    _energy.value = e
-                    val speaker = if (e > 0.05f) "User" else "—"
-                    _speakers.value = listOf(SpeakerData(0, e, 0f, Color(0xFF00FF88)))
-                }
+        viewModelScope.launch {
+            audio.energy.collect { e ->
+                _energy.value = e
+                val speaker = if (e > 0.05f) "User" else "—"
+                _speakers.value = listOf(
+                    SpeakerData(0, e, 0f, Color(0xFF00FF88))
+                )
             }
-            audio.start()
         }
+        audio.start()
     }
     
     override fun onCleared() {
