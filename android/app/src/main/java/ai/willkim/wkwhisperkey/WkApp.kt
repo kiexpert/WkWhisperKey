@@ -2,7 +2,7 @@ package ai.willkim.wkwhisperkey
 
 import android.app.Application
 import android.util.Log
-import ai.willkim.wkwhisperkey.ui.WkLog
+import ai.willkim.wkwhisperkey.WkLog
 import ai.willkim.wkwhisperkey.util.WkLogSystemBridge
 import kotlinx.coroutines.*
 import java.lang.Thread.UncaughtExceptionHandler
