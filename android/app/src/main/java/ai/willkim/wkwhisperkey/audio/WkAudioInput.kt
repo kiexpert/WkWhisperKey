@@ -38,9 +38,14 @@ class WkAudioInput {
             val buffer = ShortArray(bufferSize)
             while (isActive) {
                 val read = recorder?.read(buffer, 0, buffer.size) ?: 0
-                if (read > 0 && recorder?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                if (false && read > 0 && recorder?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     val rms = sqrt(buffer.take(read).map { it * it.toFloat() }.average()).toFloat()
                     _energy.value = rms / 1000f
+                }
+                if (read > 0) {
+                    val rms = sqrt(buffer.take(read).map { it * it.toFloat() }.average()).toFloat()
+                    _energy.value = rms / 1000f
+                    Log.i("AudioEnergy", "RMS=$rms, normalized=${_energy.value}")
                 }
             }
         }
