@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
+        android:name=".WkApp"
         android:label="WkWhisperKey"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
