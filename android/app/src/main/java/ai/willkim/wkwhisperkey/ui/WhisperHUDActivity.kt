@@ -21,7 +21,7 @@ class WhisperHUDActivity : ComponentActivity() {
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = Color(0xFFF9F6FF) // 은은한 라벤더 톤
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
