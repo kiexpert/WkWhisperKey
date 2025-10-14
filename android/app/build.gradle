@@ -38,6 +38,13 @@ android {
     externalNativeBuild {
         cmake { path "src/main/cpp/CMakeLists.txt" }
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            def timestamp = new Date().format("yyyyMMdd-HHmm")
+            outputFileName = "WkWhisperKey-${timestamp}-${variant.buildType.name}.apk"
+        }
+    }
 }
 
 dependencies {
