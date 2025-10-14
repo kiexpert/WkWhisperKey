@@ -29,7 +29,7 @@ fun LogVisualizerOverlay(modifier: Modifier = Modifier) {
 
     Box(modifier = modifier.fillMaxSize()) {
         // (배경: WhisperVisualizer)
-        WhisperVisualizer(modifier = Modifier.fillMaxSize())
+        WhisperVisualizer(Modifier.fillMaxSize())
 
         Column(
             modifier = Modifier
