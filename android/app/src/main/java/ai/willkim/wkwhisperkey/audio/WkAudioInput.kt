@@ -3,37 +3,48 @@ package ai.willkim.wkwhisperkey.audio
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.sqrt
 
 class WkAudioInput {
-    private val sampleRate = 16000  // const val 제거 (컴파일 오류 방지)
+    private var recorder: AudioRecord? = null
     private val bufferSize = AudioRecord.getMinBufferSize(
-        sampleRate,
+        16000,
         AudioFormat.CHANNEL_IN_MONO,
         AudioFormat.ENCODING_PCM_16BIT
     )
 
-    private var recorder: AudioRecord? = null
+    private val _energy = MutableStateFlow(0f)
+    val energy: StateFlow<Float> = _energy
 
-    fun startRecording(onBuffer: (ShortArray) -> Unit) {
+    private var job: Job? = null
+
+    fun start() {
         recorder = AudioRecord(
             MediaRecorder.AudioSource.MIC,
-            sampleRate,
+            16000,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             bufferSize
         )
         recorder?.startRecording()
 
-        Thread {
+        job = CoroutineScope(Dispatchers.Default).launch {
             val buffer = ShortArray(bufferSize)
-            while (recorder?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+            while (isActive) {
                 val read = recorder?.read(buffer, 0, buffer.size) ?: 0
-                if (read > 0) onBuffer(buffer.copyOf(read))
+                if (read > 0) {
+                    val rms = sqrt(buffer.take(read).map { it * it.toFloat() }.average()).toFloat()
+                    _energy.value = rms / 1000f // 정규화
+                }
             }
-        }.start()
+        }
     }
 
     fun stop() {
+        job?.cancel()
         recorder?.stop()
         recorder?.release()
         recorder = null
