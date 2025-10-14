@@ -39,27 +39,26 @@ class WhisperVisualizerViewModel : ViewModel() {
         return sqrt(e / a.size)
     }
 
+    private val audio = WkAudioInput()
+    private val _energy = MutableStateFlow(0f)
+    val energy: StateFlow<Float> = _energy
+
     init {
-        viewModelScope.launch {
-            var tick = 0
-            while (true) {
-                // 가짜 화자 데이터 (시각적 테스트용)
-                val fakeSpeakers = List(3) {
-                    SpeakerData(
-                        id = it,
-                        energy = ((sin(tick / 10f + it) + 1f) / 2f).coerceIn(0f, 1f),
-                        angle = (it * 120f + tick) % 360f,
-                        color = when (it) {
-                            0 -> Color(0xFF00FF88)
-                            1 -> Color(0xFF4488FF)
-                            else -> Color(0xFFFF4444)
-                        }
-                    )
+            viewModelScope.launch {
+                        viewModelScope.launch {
+                audio.energy.collect { e ->
+                    _energy.value = e
+                    val speaker = if (e > 0.05f) "User" else "—"
+                    _speakers.value = listOf(SpeakerData(0, e, 0f, Color(0xFF00FF88)))
                 }
-                _speakers.value = fakeSpeakers
-                tick++
-                kotlinx.coroutines.delay(100)
             }
+            audio.start()
         }
     }
+    
+    override fun onCleared() {
+        super.onCleared()
+        audio.stop()
+    }
+
 }
