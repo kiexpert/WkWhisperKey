@@ -110,7 +110,7 @@ object WkLogSystemBridge {
             while (true) {
                 delay(10_000) // periodic probe
                 try {
-                    val minBuf = getMinBufferSize(8000, CHANNEL_IN_MONO, ENCODING_PCM_16BIT)
+                    val minBuf = getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                     WkLog.i("Audio", "AudioRecord minBuffer=$minBuf bytes (8kHz, mono, 16bit)")
                 } catch (e: Exception) {
                     WkLog.e("Audio", "Error querying audio state: ${e.message}")
