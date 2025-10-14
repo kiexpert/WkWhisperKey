@@ -23,21 +23,24 @@ class WkAudioInput {
 
     fun start() {
         recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             16000,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             bufferSize
         )
-        recorder?.startRecording()
-
-        job = CoroutineScope(Dispatchers.Default).launch {
+    
+        if (recorder?.state == AudioRecord.STATE_INITIALIZED) {
+            recorder?.startRecording()
+        }
+    
+        job = CoroutineScope(Dispatchers.IO).launch {
             val buffer = ShortArray(bufferSize)
             while (isActive) {
                 val read = recorder?.read(buffer, 0, buffer.size) ?: 0
-                if (read > 0) {
+                if (read > 0 && recorder?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     val rms = sqrt(buffer.take(read).map { it * it.toFloat() }.average()).toFloat()
-                    _energy.value = rms / 1000f // 정규화
+                    _energy.value = rms / 1000f
                 }
             }
         }
