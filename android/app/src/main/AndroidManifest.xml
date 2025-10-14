@@ -6,7 +6,6 @@
 
     <application
         android:label="WkWhisperKey"
-        android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
         <!-- 시각화용 런처 액티비티 -->
