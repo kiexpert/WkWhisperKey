@@ -1,8 +1,26 @@
-<activity android:name=".ui.WhisperHUDActivity"
-          android:exported="true"
-          android:label="WkWhisper Visualizer">
-    <intent-filter>
-        <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
-    </intent-filter>
-</activity>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application
+      android:label="WkWhisperKey"
+      android:icon="@mipmap/ic_launcher">
+
+    <activity
+        android:name=".ui.WhisperHUDActivity"
+        android:exported="true"
+        android:label="WkWhisper Visualizer">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent-filter>
+    </activity>
+
+    <service
+        android:name=".WkWhisperKeyIME"
+        android:permission="android.permission.BIND_INPUT_METHOD"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.view.InputMethod" />
+        </intent-filter>
+    </service>
+
+  </application>
+</manifest>
