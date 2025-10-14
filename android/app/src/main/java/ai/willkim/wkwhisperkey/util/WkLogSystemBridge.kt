@@ -2,13 +2,14 @@ package ai.willkim.wkwhisperkey.util
 
 import android.app.Application
 import android.content.Context
+import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioRecord.*
 import android.net.*
 import android.os.Bundle
 import android.util.Log
 import kotlinx.coroutines.*
-import ai.willkim.wkwhisperkey.ui.WkLog
+import ai.willkim.wkwhisperkey.WkLog
 
 /**
  * System-level event collector for in-app log overlay.
@@ -40,6 +41,7 @@ object WkLogSystemBridge {
         })
 
         WkLog.i("System", "WkLogSystemBridge initialized.")
+        WkLog.i("Audio", "Format: ${AudioFormat.CHANNEL_IN_MONO}, ${AudioFormat.ENCODING_PCM_16BIT}")
     }
 
     // ---- Activity lifecycle ----
