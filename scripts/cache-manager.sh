@@ -6,7 +6,6 @@ ACTION="$2"    # restore | save
 PREFIX="wk${TYPE}"
 BASE_DIR=$(pwd)
 CACHE_PATHS=""
-HASH_FILE=".cachehash-${TYPE}.txt"
 
 # 📁 캐시 경로 정의
 if [ "$TYPE" = "core" ]; then
@@ -42,14 +41,6 @@ calc_hash() {
   find $paths -type f -printf "%p %s\n" 2>/dev/null | sort | sha256sum | cut -d ' ' -f1
 }
 
-# 🧮 새 해시 계산 (restore 모드는 스킵)
-if [ "$ACTION" != "restore" ]; then
-  echo "🔍 Calculating content hash for ${TYPE}..."
-  NEW_HASH=$(calc_hash "$CACHE_PATHS")
-  echo "$NEW_HASH" > "$HASH_FILE"
-  echo "NEW_HASH=$NEW_HASH" >> "$GITHUB_ENV"
-fi
-
 # ♻️ RESTORE 모드
 if [ "$ACTION" = "restore" ]; then
   echo "RESTORE_KEY=${LATEST_KEY}" >> "$GITHUB_ENV"
@@ -57,9 +48,14 @@ if [ "$ACTION" = "restore" ]; then
   exit 0
 fi
 
+# 🧮 새 해시 계산 (restore 모드는 스킵)
+echo "🔍 Calculating content hash for ${TYPE}..."
+NEW_HASH=$(calc_hash "$CACHE_PATHS")
+echo "$NEW_HASH" > "$HASH_FILE"
+
 # 💾 SAVE 모드
 echo "💾 Checking ${TYPE} cache changes..."
-OLD_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
+OLD_HASH="${LATEST_KEY: -12}"
 
 if [ "$OLD_HASH" != "$NEW_HASH" ]; then
   echo "🧠 Change detected → deleting old caches (except latest)..."
@@ -77,6 +73,7 @@ fi
 
 # 🧠 새 키 생성
 NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
+echo "SAVE_KEY=$NEW_KEY" >> "$GITHUB_ENV"
 echo "💾 Saving new cache: ${NEW_KEY}"
 
 # ✅ 실제 저장
