@@ -52,6 +52,7 @@ fi
 
 # ♻️ RESTORE 모드
 if [ "$ACTION" = "restore" ]; then
+  echo "RESTORE_KEY=${LATEST_KEY}" >> "$GITHUB_ENV"
   echo "🔎 Restore mode complete — no recompression."
   exit 0
 fi
