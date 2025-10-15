@@ -112,17 +112,36 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       # ────────────── 12️⃣ Save Caches (post-build) ──────────────
-      - name: 💾 Save Core Cache
-        if: always()
+      - name: 💾 Compute Core Cache Key
+        id: core_save
         run: bash scripts/cache-manager.sh core save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 💾 Save Build Cache
-        if: always()
+      - name: 💾 Save Core Cache
+        if: steps.core_save.outputs.save_key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+          key: ${{ steps.core_save.outputs.save_key }}
+
+      - name: 💾 Compute Build Cache Key
+        id: build_save
         run: bash scripts/cache-manager.sh build save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 💾 Save Build Cache
+        if: steps.build_save.outputs.save_key != ''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            android/app/build/intermediates
+            android/app/.cxx
+          key: ${{ steps.build_save.outputs.save_key }}
 
       # ────────────── 13️⃣ Auto Release (main only) ──────────────
       - name: 🚀 Create GitHub Release
