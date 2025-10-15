@@ -6,12 +6,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import ai.willkim.wkwhisperkey.ui.WhisperVisualizerViewModel
+import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
 
 class WhisperHUDActivity : ComponentActivity() {
 
@@ -26,14 +26,16 @@ class WhisperHUDActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    // ✅ 배경: Whisper 비주얼라이저
+                    // ✅ 1. Whisper 비주얼라이저 (배경)
                     WhisperVisualizer(viewModel)
 
-                    // ✅ 오버레이: 로그 뷰어 (투명도 높게)
+                    // ✅ 2. 로그 및 마이크 상태 오버레이
                     LogVisualizerOverlay(
+                        context = this@WhisperHUDActivity,
+                        viewModel = viewModel,
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0x66000000)) // 반투명 블랙
+                            .background(Color(0x66000000)) // 반투명 블랙 오버레이
                     )
                 }
             }
