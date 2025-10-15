@@ -37,6 +37,7 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/.cache
           CORE_ARCHIVE=".cache/core-${RUNNER_OS}.tar.zst"
           if [ -f "$CORE_ARCHIVE" ]; then
+            git add "$CORE_ARCHIVE"
             echo "📦 Restoring core cache..."
             sudo tar --zstd -xf "$CORE_ARCHIVE" -P -C /
             echo "✅ Core tools restored."
@@ -53,6 +54,7 @@ jobs:
           BRANCH=${GITHUB_REF_NAME//\//-}
           BUILD_ARCHIVE=".cache/build-${BRANCH}.tar.zst"
           if [ -f "$BUILD_ARCHIVE" ]; then
+            git add "$BUILD_ARCHIVE"
             echo "📦 Restoring build cache for branch $BRANCH ..."
             tar --zstd -xf "$BUILD_ARCHIVE" -P -C .
             echo "✅ Build cache restored."
@@ -62,7 +64,7 @@ jobs:
 
       - name: 🧹 Clean Ghost Files
         run: |
-          git clean -fdX -e ".cache"
+          git clean -fdX -e ".cache/"
           echo "✅ Cleaned untracked files."
 
       - name: 🧱 Initialize Gradle Wrapper
