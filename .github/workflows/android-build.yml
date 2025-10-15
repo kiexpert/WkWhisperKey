@@ -38,10 +38,9 @@ jobs:
       # ────────────── 4️⃣ Detect latest core cache ──────────────
       - name: 🔍 Detect Latest Core Cache
         id: core_meta
-        run: bash scripts/cache-manager.sh core restore
+        run: bash scripts/cache-manager.sh core restore "$GITHUB_OUTPUT" && cat $GITHUB_ENV >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ENV: $GITHUB_OUTPUT
 
       # ────────────── 5️⃣ Restore core cache ──────────────
       - name: ♻️ Restore Core Cache
@@ -57,10 +56,9 @@ jobs:
       # ────────────── 6️⃣ Detect latest build cache ──────────────
       - name: 🔍 Detect Latest Build Cache
         id: build_meta
-        run: bash scripts/cache-manager.sh build restore
+        run: bash scripts/cache-manager.sh build restore "$GITHUB_OUTPUT" && cat $GITHUB_ENV >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ENV: $GITHUB_OUTPUT
 
       # ────────────── 7️⃣ Restore build cache ──────────────
       - name: ♻️ Restore Build Cache
@@ -118,10 +116,9 @@ jobs:
       - name: 💾 Compute Core Cache Key
         id: core_save
         if: always()
-        run: bash scripts/cache-manager.sh core save
+        run: bash scripts/cache-manager.sh core save "$GITHUB_OUTPUT" && cat $GITHUB_ENV >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ENV: $GITHUB_OUTPUT
 
       - name: 💾 Save Core Cache
         if: always() && steps.core_save.outputs.save_key != ''
@@ -135,10 +132,9 @@ jobs:
       - name: 💾 Compute Build Cache Key
         id: build_save
         if: always()
-        run: bash scripts/cache-manager.sh build save
+        run: bash scripts/cache-manager.sh build save "$GITHUB_OUTPUT" && cat $GITHUB_ENV >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ENV: $GITHUB_OUTPUT
 
       - name: 💾 Save Build Cache
         if: always() && steps.build_save.outputs.save_key != ''
