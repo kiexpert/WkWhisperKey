@@ -13,75 +13,44 @@ concurrency:
 
 jobs:
   build:
-    name: Kotlin Multiplatform + Android Build
     runs-on: ubuntu-latest
+    name: Kotlin Multiplatform + Android Build
 
     steps:
-      # 1️⃣ Checkout
       - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK
-      - name: ☕ Setup JDK 17
+      - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle Wrapper
       - name: 🧱 Init Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 최신 wkcore 캐시 검색 및 복원
-      - name: 🔍 Find and Restore Latest wkcore Cache
-        id: restore_core
+      - name: 🔍 Restore Core Cache
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "🔍 Searching latest wkcore cache..."
-          gh cache list --limit 1000 --json key,lastAccessedAt,id | \
-            jq -r '.[] | select(.key | startswith("wkcore-")) | [.id,.key,.lastAccessedAt] | @tsv' \
-            | sort -k3 -r | tee all_core_caches.txt | head -n1 > latest_core.txt
+        run: bash scripts/cache-manager.sh restore core "" $GH_TOKEN
 
-          if [ -s latest_core.txt ]; then
-            LATEST_ID=$(cut -f1 latest_core.txt)
-            LATEST_KEY=$(cut -f2 latest_core.txt)
-            echo "✅ Latest core cache: $LATEST_KEY"
-            echo "core_key=$LATEST_KEY" >> $GITHUB_OUTPUT
+      - name: 🔍 Restore Build Cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/cache-manager.sh restore build ${{ github.ref_name }} $GH_TOKEN
 
-            echo "🧹 Removing old wkcore caches..."
-            grep -v "$LATEST_KEY" all_core_caches.txt | cut -f1 | while read id; do
-              gh cache delete "$id" --confirm || true
-            done
-          else
-            echo "⚠️ No wkcore cache found."
-          fi
-
-      - name: ♻️ Restore Core Cache
-        if: steps.restore_core.outputs.core_key != ''
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.restore_core.outputs.core_key }}
-          restore-keys: wkcore-
-
-      # 5️⃣ Ensure NDK if missing
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk ]; then
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
           fi
 
-      # 6️⃣ Clean untracked files
-      - name: 🧹 Clean Ghost Files
+      - name: 🧹 Clean Workspace
         run: git clean -fdX
 
-      # 7️⃣ Build APK
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
@@ -90,61 +59,33 @@ jobs:
           echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV
           exit $EXIT_CODE
 
-      # 8️⃣ Save Core Cache (always)
       - name: 💾 Save Core Cache
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
-          key: wkcore-${{ github.run_id }}
-
-      # 9️⃣ Delete old wkbuild caches
-      - name: 🧹 Delete old wkbuild caches
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "Deleting old wkbuild caches for this branch..."
-          gh cache list --json id,key | jq -r --arg prefix "wkbuild-${{ github.ref_name }}" \
-            '.[] | select(.key | startswith($prefix)) | [.id,.key] | @tsv' > build_caches.txt
-          NEW_KEY="wkbuild-${{ github.ref_name }}-${{ github.run_id }}"
-          grep -v "$NEW_KEY" build_caches.txt | cut -f1 | while read id; do
-            gh cache delete "$id" --confirm || true
-          done
+        run: bash scripts/cache-manager.sh save core "" $GH_TOKEN
 
-      # 🔟 Save new wkbuild cache
       - name: 💾 Save Build Cache
         if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            android/app/build/intermediates
-            android/app/.cxx
-          key: wkbuild-${{ github.ref_name }}-${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/cache-manager.sh save build ${{ github.ref_name }} $GH_TOKEN
 
-      # 11️⃣ Upload APK
-      - name: 📦 Upload APK Artifact
+      - name: 📦 Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 12️⃣ Compute next tag
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
           last=$(git describe --tags --abbrev=0 2>/dev/null || echo "wk-v0.1.0")
-          base=${last%.*}
-          num=${last##*.}
-          next=$((num + 1))
+          base=${last%.*}; num=${last##*.}; next=$((num + 1))
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
-          echo "Next tag: ${base}.${next}"
 
-      # 13️⃣ Extract tail of build log
-      - name: 📜 Extract Tail of Build Log
+      - name: 📜 Extract Build Log Tail
         id: taillog
         if: always()
         run: |
@@ -152,8 +93,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 14️⃣ Auto-Release (main only)
-      - name: 🚀 Create GitHub Release
+      - name: 🚀 Release (main only)
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
         with:
@@ -163,11 +103,9 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
-            - **Gradle:** 8.7
-            - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### 🧱 Recent Build Log
+            ### Recent Log
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
