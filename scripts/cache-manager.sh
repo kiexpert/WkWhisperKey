@@ -1,62 +1,84 @@
 #!/usr/bin/env bash
 set -e
 
-TYPE=$1      # core or build
-ACTION=$2    # restore or save
+TYPE="$1"      # core | build
+ACTION="$2"    # restore | save
 PREFIX="wk${TYPE}"
-ROOT_DIR="/usr/local/lib/android/sdk"
+BASE_DIR=$(pwd)
+CACHE_PATHS=""
+HASH_FILE=".cachehash-${TYPE}.txt"
+
+# 📁 캐시 경로 정의
+if [ "$TYPE" = "core" ]; then
+  CACHE_PATHS="/usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake"
+else
+  CACHE_PATHS="~/.gradle/caches android/app/build/intermediates android/app/.cxx"
+fi
 
 echo "♻️  ${ACTION^} ${TYPE} cache for key prefix '${PREFIX}-'..."
 
-# ---- Restore -------------------------------------------------
+# 🔍 최신 캐시 정보 탐색 (키, ID, 크기, 생성시간)
+CACHE_INFO=$(gh cache list --limit 1 --order desc --json id,key,sizeInBytes,createdAt \
+  | jq -r ".[] | select(.key|startswith(\"${PREFIX}-\")) | \"\(.key)|\(.id)|\(.sizeInBytes)|\(.createdAt)\"" || true)
+
+if [ -n "$CACHE_INFO" ]; then
+  IFS="|" read -r LATEST_KEY LATEST_ID LATEST_SIZE LATEST_TIME <<< "$CACHE_INFO"
+  SIZE_MB=$(awk "BEGIN {printf \"%.1f\", ${LATEST_SIZE}/1024/1024}")
+  echo "📦  Latest cache found:"
+  echo "    • Key: ${LATEST_KEY}"
+  echo "    • ID: ${LATEST_ID}"
+  echo "    • Size: ${SIZE_MB} MB"
+  echo "    • Created: ${LATEST_TIME}"
+else
+  echo "⚠️  No existing cache found for ${PREFIX}"
+  LATEST_KEY=""
+fi
+
+echo "LATEST_KEY=${LATEST_KEY}" >> "$GITHUB_ENV"
+
+# 🔢 해시 계산 함수 (경로 + 크기)
+calc_hash() {
+  local paths="$1"
+  find $paths -type f -printf "%p %s\n" 2>/dev/null | sort | sha256sum | cut -d ' ' -f1
+}
+
+# 🧮 새 해시 계산 (restore 모드는 스킵)
+if [ "$ACTION" != "restore" ]; then
+  echo "🔍 Calculating content hash for ${TYPE}..."
+  NEW_HASH=$(calc_hash "$CACHE_PATHS")
+  echo "$NEW_HASH" > "$HASH_FILE"
+  echo "NEW_HASH=$NEW_HASH" >> "$GITHUB_ENV"
+fi
+
+# ♻️ RESTORE 모드
 if [ "$ACTION" = "restore" ]; then
-  echo "🔎 Searching for latest cache..."
-  LIST=$(gh cache list --key "${PREFIX}-" --json id,key,sizeInBytes,createdAt --limit 1 --sort createdAt --order DESC 2>/dev/null || echo "[]")
-
-  if [[ "$LIST" == "[]" ]]; then
-    echo "⚠️  No existing cache found for ${PREFIX}"
-    exit 0
-  fi
-
-  KEY=$(echo "$LIST" | jq -r '.[0].key')
-  SIZE=$(echo "$LIST" | jq -r '.[0].sizeInBytes')
-  DATE=$(echo "$LIST" | jq -r '.[0].createdAt')
-
-  echo "📦 Found cache:"
-  echo "• Key: $KEY"
-  echo "• Size: $((SIZE / 1048576)) MB"
-  echo "• Created: $DATE"
-
-  echo "restore_key=$KEY" >> "$GITHUB_OUTPUT"
+  echo "🔎 Restore mode complete — no recompression."
   exit 0
 fi
 
-# ---- Save ----------------------------------------------------
-if [ "$ACTION" = "save" ]; then
-  echo "🔍 Calculating content hash for ${TYPE}..."
-  HASH=$(find $ROOT_DIR -maxdepth 3 -type f -exec sha1sum {} + 2>/dev/null \
-      | sort | sha1sum | cut -d' ' -f1 || echo "none")
+# 💾 SAVE 모드
+echo "💾 Checking ${TYPE} cache changes..."
+OLD_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "none")
 
-  NEW_KEY="${PREFIX}-${HASH}"
-  echo "💾 Checking ${TYPE} cache changes..."
+if [ "$OLD_HASH" != "$NEW_HASH" ]; then
+  echo "🧠 Change detected → deleting old caches (except latest)..."
 
-  EXIST=$(gh cache list --key "${PREFIX}-" --json key --limit 1 | jq -r '.[0].key' 2>/dev/null || echo "")
-
-  if [ "$EXIST" != "$NEW_KEY" ]; then
-    echo "🧠 Change detected → deleting old caches..."
-    OLD_LIST=$(gh cache list --key "${PREFIX}-" --json id,key,createdAt --limit 50 2>/dev/null || echo "[]")
-
-    echo "$OLD_LIST" | jq -r '.[].id' | while read -r CID; do
-      if [ -n "$CID" ]; then
-        echo "🗑 Deleting cache ID $CID..."
-        gh cache delete "$CID" --yes || true
-      fi
-    done
-  else
-    echo "✅ No change detected. Skipping save."
-    exit 0
-  fi
-
-  echo "💾 Saving new cache: $NEW_KEY"
-  echo "save_key=$NEW_KEY" >> "$GITHUB_OUTPUT"
+  gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
+    if [[ "$KEY" == ${PREFIX}-* && "$KEY" != "$LATEST_KEY" ]]; then
+      echo "🗑  Deleting cache ID $ID ($KEY)..."
+      yes | gh cache delete "$ID" || true
+    fi
+  done
+else
+  echo "✅ No cache change detected for ${TYPE}."
+  exit 0
 fi
+
+# 🧠 새 키 생성
+NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
+echo "💾 Saving new cache: ${NEW_KEY}"
+
+# ✅ 실제 저장
+gh cache upload "$NEW_KEY" $CACHE_PATHS || true
+
+echo "✅ ${TYPE^} cache saved successfully."
