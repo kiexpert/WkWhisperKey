@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 concurrency:
@@ -35,65 +35,61 @@ jobs:
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ NDK 캐시 복원
-      - name: ♻️ Restore NDK
-        id: ndkcache
+      # 4️⃣ 🧩 브랜치별 NDK/CMake 캐시 복원
+      - name: ♻️ Restore Build Cache (NDK/CMake)
+        id: buildcache
         uses: actions/cache/restore@v4
         with:
-          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
-          key: ndk-${{ runner.os }}-t1-26.1.10909125
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+            ~/.gradle/caches
+            android/app/build/intermediates
+            android/app/.cxx
+          key: wkbuild-${{ github.ref_name }}
           restore-keys: |
-            ndk-${{ runner.os }}-t1-
+            wkbuild-
 
-      # 5️⃣ NDK 확인 및 설치 (없을 때만)
+      # 5️⃣ NDK 확인 및 설치
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
             echo "Installing NDK via sdkmanager..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-            ./gradlew clean
           else
-            echo "NDK already installed."
+            echo "✅ NDK already installed."
           fi
 
+      # 6️⃣ 유령파일 제거
       - name: 🧹 Clean Ghost Files Only
         run: |
           echo "🧽 Removing untracked and deleted-branch ghost files..."
-          # 안전 모드: .gitignore 에 포함된 빌드 산출물 제외
           git clean -fdX
-          echo "✅ Removed files not tracked by git, caches kept."
+          echo "✅ Removed untracked files, caches kept."
 
-      # 6️⃣ NDK 캐시 저장 (처음 설치된 경우만)
-      - name: 💾 Save NDK (only if cache missing)
-        if: steps.ndkcache.outputs.cache-hit != 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: /usr/local/lib/android/sdk/ndk/26.1.10909125
-          key: ndk-${{ runner.os }}-t1-26.1.10909125
-
-      # 7️⃣ Gradle 캐시 복원 (비활성화 중)
-      - name: ♻️ Restore Gradle Cache
-        if: false
-        id: gradlecache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.gradle/caches
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
-      # 8️⃣ 클린 + 빌드 실행
+      # 7️⃣ 🚀 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Gradle build failed with exit code $EXIT_CODE"
-            exit $EXIT_CODE
-          fi
+          echo "BUILD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
+          exit $EXIT_CODE
 
-      # 9️⃣ 빌드 산출물 업로드
+      # 8️⃣ 💾 캐시 저장 (성공/실패 무관)
+      - name: 💾 Save Branch Build Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+            ~/.gradle/caches
+            android/app/build/intermediates
+            android/app/.cxx
+          key: wkbuild-${{ github.ref_name }}
+
+      # 9️⃣ 📦 APK 업로드
       - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -101,7 +97,7 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 🔟 자동 태그 계산
+      # 🔟 🔢 태그 계산
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -110,9 +106,8 @@ jobs:
           num=${last##*.}
           next=$((num + 1))
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
-          echo "Next tag: ${base}.${next}"
 
-      # 11️⃣ 로그 tail 추출
+      # 11️⃣ 📜 로그 tail
       - name: 📜 Extract Tail of Build Log
         id: taillog
         if: always()
@@ -121,7 +116,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 12️⃣ GitHub Release 자동 생성 (main 전용)
+      # 12️⃣ 🚀 릴리즈 (main 전용)
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -132,11 +127,12 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
-            - **Gradle:** 8.7
             - **NDK:** 26.1.10909125
+            - **Gradle:** 8.7
             - **Build Time:** ${{ github.run_started_at }}
+            - **Exit:** ${{ env.BUILD_EXIT }}
 
-            ### 🧱 Recent Build Log
+            ### 🧱 Build Tail
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
@@ -145,3 +141,17 @@ jobs:
           files: android/app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 🧹 머지 후 캐시 삭제 (PR 닫힐 때만)
+  cleanup:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🗑 Delete Branch Cache After Merge
+        run: |
+          echo "🧹 Deleting cache for branch: ${{ github.event.pull_request.head.ref }}"
+          gh cache list --limit 50 --json id,key | \
+            jq -r '.[] | select(.key=="wkbuild-${{ github.event.pull_request.head.ref }}") | .id' | \
+            xargs -r -n1 gh cache delete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
