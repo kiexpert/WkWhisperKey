@@ -10,7 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
+import ai.willkim.wkwhisperkey.ui.WhisperVisualizerViewModel
 
 class WhisperHUDActivity : ComponentActivity() {
 
