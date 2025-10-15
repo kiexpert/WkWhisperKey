@@ -68,6 +68,10 @@ NEW_KEY="${PREFIX}-${NEW_HASH}"
 echo "SAVE_KEY=$NEW_KEY" >> "$GITHUB_OUTPUT"
 echo "💾 Saving new cache: ${NEW_KEY}"
 
+if [ "$OLD_HASH" == "" ]; then
+  exit 0
+fi
+
 echo "🧠 Change detected → deleting old caches (except latest)..."
 
 gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
