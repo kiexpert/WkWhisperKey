@@ -14,10 +14,6 @@ else
   CACHE_PATH="$CACHE_PATH_BUILD"
 fi
 
-echo "🔍 Calculating content hash for ${TYPE}..."
-HASH=$(find $CACHE_PATH -type f -exec sha1sum {} + 2>/dev/null | sort | sha1sum | cut -d' ' -f1 || echo "none")
-NEW_KEY="${PREFIX}-${HASH:0:12}"
-
 if [ "$ACTION" = "restore" ]; then
   echo "♻️ Restoring ${TYPE} cache for key prefix '${PREFIX}-'..."
   echo "restore_key=${NEW_KEY}" >> "$GITHUB_OUTPUT"
@@ -50,6 +46,10 @@ if [ "$ACTION" = "restore" ]; then
   echo "✅ Cache restored successfully from $RESTORE_KEY"
   exit 0
 fi
+
+echo "🔍 Calculating content hash for ${TYPE}..."
+HASH=$(find $CACHE_PATH -type f -exec sha1sum {} + 2>/dev/null | sort | sha1sum | cut -d' ' -f1 || echo "none")
+NEW_KEY="${PREFIX}-${HASH:0:12}"
 
 if [ "$ACTION" = "save" ]; then
   echo "💾 Checking ${TYPE} cache changes..."
