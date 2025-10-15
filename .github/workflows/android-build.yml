@@ -35,46 +35,49 @@ jobs:
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 🔑 캐시 키 정의
-      - name: 🕒 Define Cache Keys
+      # 4️⃣ 키 계산
+      - name: 🔑 Compute Cache Keys
         id: keys
         run: |
-          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
-          echo "wkcore_key=wkcore-Linux" >> $GITHUB_OUTPUT
-          echo "wkbuild_key=wkbuild-${BRANCH}" >> $GITHUB_OUTPUT
+          echo "core_key=wkcore-ubuntu" >> $GITHUB_OUTPUT
+          echo "build_key=wkbuild-${GITHUB_REF_NAME//\//-}" >> $GITHUB_OUTPUT
 
-      # 5️⃣ 코어 캐시 복원 (NDK, CMake)
-      - name: ♻️ Restore Core Tools Cache
+      # 5️⃣ 코어 툴 해시 계산 (빌드 전)
+      - name: 🧮 Compute Core Hash Before Build
+        id: corehash_before
+        run: |
+          if [ -d /usr/local/lib/android/sdk ]; then
+            find /usr/local/lib/android/sdk -type f -printf "%s %p\n" | sha256sum | cut -d' ' -f1 > core_before.txt
+          else
+            echo "none" > core_before.txt
+          fi
+          echo "hash_before=$(cat core_before.txt)" >> $GITHUB_OUTPUT
+
+      # 6️⃣ 코어툴 캐시 복원
+      - name: ♻️ Restore Core Tools
         id: corecache
         uses: actions/cache/restore@v4
         with:
           path: |
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
-          restore-keys: wkcore-Linux
+          key: ${{ steps.keys.outputs.core_key }}
+          restore-keys: wkcore-
+          enableCrossOsArchive: false
 
-      # 6️⃣ 빌드 전 코어 툴 해시 계산
-      - name: 🔍 Compute Core Hash (before build)
-        id: prehash
-        run: |
-          if [ -d /usr/local/lib/android/sdk/ndk ]; then
-            find /usr/local/lib/android/sdk/{ndk,cmake} -type f -exec sha1sum {} + | sha1sum | awk '{print $1}' > corehash_before.txt
-          else
-            echo "none" > corehash_before.txt
-          fi
-          echo "corehash_before=$(cat corehash_before.txt)" >> $GITHUB_OUTPUT
-
-      # 7️⃣ NDK 확인 및 설치
+      # 7️⃣ NDK 설치
       - name: 📱 Ensure NDK
         run: |
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
             ./gradlew clean
           fi
 
-      # 8️⃣ 빌드 캐시 복원 (브랜치별)
+      # 8️⃣ 고스트 정리
+      - name: 🧹 Clean Ghost Files
+        run: git clean -fdX
+
+      # 9️⃣ 빌드캐시 복원
       - name: ♻️ Restore Build Cache
         id: buildcache
         uses: actions/cache/restore@v4
@@ -83,44 +86,35 @@ jobs:
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
+          key: ${{ steps.keys.outputs.build_key }}
           restore-keys: wkbuild-
 
-      # 9️⃣ 빌드 실행
+      # 🔟 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          echo "exit_code=${EXIT_CODE}" >> $GITHUB_ENV
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Gradle build failed with exit code $EXIT_CODE"
-            exit $EXIT_CODE
-          fi
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_ENV
 
-      # 🔟 빌드 산출물 업로드
-      - name: 📦 Upload APK Artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wkwhisperkey-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-
-      # 11️⃣ 빌드 후 코어 툴 해시 계산
-      - name: 🔍 Compute Core Hash (after build)
-        id: posthash
+      # 11️⃣ 코어 툴 해시 계산 (빌드 후)
+      - name: 🧮 Compute Core Hash After Build
+        id: corehash_after
         run: |
-          find /usr/local/lib/android/sdk/{ndk,cmake} -type f -exec sha1sum {} + | sha1sum | awk '{print $1}' > corehash_after.txt
-          echo "corehash_after=$(cat corehash_after.txt)" >> $GITHUB_OUTPUT
+          find /usr/local/lib/android/sdk -type f -printf "%s %p\n" | sha256sum | cut -d' ' -f1 > core_after.txt
+          echo "hash_after=$(cat core_after.txt)" >> $GITHUB_OUTPUT
 
-      # 12️⃣ 코어캐시 변경 감지 및 초기화 (모든 기존 코어캐시 삭제)
-      - name: 💣 Purge All Core Cache if Changed
-        if: steps.posthash.outputs.corehash_after != steps.prehash.outputs.corehash_before
+      # 12️⃣ 해시 비교 및 캐시 삭제
+      - name: 🧨 Remove Outdated Core Cache
+        if: steps.corehash_before.outputs.hash_before != steps.corehash_after.outputs.hash_after
         run: |
-          echo "Core hash changed. Removing all wkcore-Linux caches..."
-          gh cache list --limit 1000 | grep 'wkcore-Linux' | awk '{print $1}' | xargs -r -I {} gh cache delete {}
+          echo "Core hash changed, removing old caches..."
+          gh api repos/${{ github.repository }}/actions/caches \
+            --paginate -q '.actions_caches[].id' |
+            xargs -I{} gh api repos/${{ github.repository }}/actions/caches/{} -X DELETE || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 13️⃣ 코어캐시 저장 (항상 최신본으로 유지)
+      # 13️⃣ 코어 캐시 저장 (항상 최신본)
       - name: 💾 Save Core Tools Cache
         if: always()
         uses: actions/cache/save@v4
@@ -128,16 +122,9 @@ jobs:
           path: |
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
+          key: ${{ steps.keys.outputs.core_key }}
 
-      # 14️⃣ 이전 빌드 캐시 삭제
-      - name: 💣 Purge Old Build Cache
-        if: always()
-        run: |
-          echo "Removing old branch build caches..."
-          gh cache list --limit 1000 | grep "wkbuild-${GITHUB_REF_NAME}" | awk '{print $1}' | xargs -r -I {} gh cache delete {}
-
-      # 15️⃣ 빌드캐시 저장
+      # 14️⃣ 빌드 캐시 저장 (브랜치별 최신본만)
       - name: 💾 Save Build Cache
         if: always()
         uses: actions/cache/save@v4
@@ -146,9 +133,9 @@ jobs:
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
+          key: ${{ steps.keys.outputs.build_key }}
 
-      # 16️⃣ 로그 tail
+      # 15️⃣ 로그 tail
       - name: 📜 Extract Tail of Build Log
         if: always()
-        run: tail -n 30 build.log || true
+        run: tail -n 20 build.log
