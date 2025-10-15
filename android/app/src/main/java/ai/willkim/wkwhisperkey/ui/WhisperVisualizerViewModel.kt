@@ -62,4 +62,11 @@ class WhisperVisualizerViewModel : ViewModel() {
         audio.stop()
     }
 
+    fun reconnectAudio() {
+        viewModelScope.launch {
+            audio.stop()
+            delay(500)
+            audio.start()
+        }
+    }
 }
