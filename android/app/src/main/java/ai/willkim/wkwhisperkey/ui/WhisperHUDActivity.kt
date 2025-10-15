@@ -26,9 +26,6 @@ class WhisperHUDActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    // ✅ 1. Whisper 비주얼라이저 (배경)
-                    WhisperVisualizer(viewModel)
-
                     // ✅ 2. 로그 및 마이크 상태 오버레이
                     LogVisualizerOverlay(
                         context = this@WhisperHUDActivity,
@@ -37,6 +34,9 @@ class WhisperHUDActivity : ComponentActivity() {
                             .fillMaxSize()
                             .background(Color(0x66000000)) // 반투명 블랙 오버레이
                     )
+
+                    // ✅ 1. Whisper 비주얼라이저 (배경)
+                    WhisperVisualizer(viewModel)
                 }
             }
         }
