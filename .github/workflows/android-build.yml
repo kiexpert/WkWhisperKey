@@ -15,6 +15,8 @@ jobs:
   build:
     name: Kotlin Multiplatform + Android Build
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_CACHE_COMPRESSION: gzip
 
     steps:
       # 1️⃣ 저장소 체크아웃
@@ -24,18 +26,18 @@ jobs:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ ☕ JDK 17
+      # 2️⃣ ☕ Set up JDK
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle 초기화
+      # 3️⃣ Gradle 래퍼 초기화
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ ♻️ Core Tool Cache 복원 (NDK/CMake)
+      # 4️⃣ ♻️ Restore Core Tool Cache
       - name: ♻️ Restore Core Tool Cache
         id: corecache
         uses: actions/cache/restore@v4
@@ -47,22 +49,21 @@ jobs:
           restore-keys: |
             wkcore-${{ runner.os }}-
 
-      # 5️⃣ 📦 NDK/CMake 설치 확인 (업데이트 금지)
+      # 5️⃣ Core tools 확인
       - name: 📦 Ensure Core Tools
         run: |
-          mkdir -p /usr/local/lib/android/sdk
           echo "🔍 Checking NDK/CMake installation..."
           if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK 26.1.10909125..."
+            echo "Installing NDK..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
           fi
           if [ ! -d /usr/local/lib/android/sdk/cmake/3.22.1 ]; then
-            echo "Installing CMake 3.22.1..."
+            echo "Installing CMake..."
             yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "cmake;3.22.1"
           fi
-          echo "✅ Core tools ready (no updates yet)."
+          echo "✅ Core tools verified."
 
-      # 6️⃣ 브랜치별 빌드 캐시 복원
+      # 6️⃣ Branch build cache 복원
       - name: ♻️ Restore Branch Build Cache
         id: buildcache
         uses: actions/cache/restore@v4
@@ -75,7 +76,7 @@ jobs:
           restore-keys: |
             wkbuild-
 
-      # 7️⃣ 🧹 Untracked 파일 정리
+      # 7️⃣ 🧹 Clean up
       - name: 🧹 Clean Ghost Files
         run: |
           git clean -fdX
@@ -90,25 +91,39 @@ jobs:
           echo "BUILD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
           exit $EXIT_CODE
 
-      # 9️⃣ 🔄 Build 성공 후 NDK/CMake 업데이트 + 캐시 저장
+      # 9️⃣ 🔄 Update Core Tools + Compute New Hash
       - name: 🔄 Update Core Tools
-        if: success()
+        if: always()
         run: |
-          echo "🔍 Checking Android SDK for updates..."
+          echo "🔍 Running sdkmanager update..."
           yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --update
           /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --list > sdkmanager.log
-          echo "✅ SDK list snapshot saved for cache key update."
+          HASH=$(sha256sum sdkmanager.log | cut -d' ' -f1)
+          echo "new_hash=$HASH" >> $GITHUB_ENV
+          echo "✅ Computed new hash: $HASH"
 
-      - name: 💾 Save Core Tool Cache (after build)
-        if: success()
+      # 🔟 Check for existing core cache
+      - name: 🧮 Check if Core Cache Exists
+        id: checkcache
+        if: always()
+        run: |
+          echo "Checking if wkcore-${{ runner.os }}-${{ env.new_hash }} exists..."
+          gh cache list --limit 100 --json key | jq -r '.[].key' | grep -q "wkcore-${{ runner.os }}-${{ env.new_hash }}" && \
+            echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 11️⃣ Save Core Tool Cache (even on failure)
+      - name: 💾 Save Core Tool Cache (if new or missing)
+        if: always() && steps.checkcache.outputs.exists == 'false'
         uses: actions/cache/save@v4
         with:
           path: |
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
-          key: wkcore-${{ runner.os }}-${{ hashFiles('**/sdkmanager.log') }}
+          key: wkcore-${{ runner.os }}-${{ env.new_hash }}
 
-      # 🔟 브랜치 빌드 캐시 저장
+      # 12️⃣ Save Branch Build Cache
       - name: 💾 Save Branch Build Cache
         if: always()
         uses: actions/cache/save@v4
@@ -119,7 +134,7 @@ jobs:
             android/app/.cxx
           key: wkbuild-${{ github.ref_name }}
 
-      # 11️⃣ 📦 Upload APK
+      # 13️⃣ 📦 Upload APK
       - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -127,7 +142,7 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 12️⃣ 🔢 Compute Next Tag
+      # 14️⃣ 🔢 Compute Next Tag
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -138,7 +153,7 @@ jobs:
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
           echo "Next tag: ${base}.${next}"
 
-      # 13️⃣ 📜 Extract Build Log Tail
+      # 15️⃣ 📜 Extract Build Log Tail
       - name: 📜 Extract Tail of Build Log
         id: taillog
         if: always()
@@ -147,7 +162,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 14️⃣ 🚀 Create GitHub Release (main only)
+      # 16️⃣ 🚀 Create Release (main only)
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -167,8 +182,6 @@ jobs:
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
-
-            _Auto-generated by GitHub Actions_
           files: android/app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
