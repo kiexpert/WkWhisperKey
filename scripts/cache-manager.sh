@@ -51,30 +51,29 @@ fi
 # 🧮 새 해시 계산 (restore 모드는 스킵)
 echo "🔍 Calculating content hash for ${TYPE}..."
 NEW_HASH=$(calc_hash "$CACHE_PATHS")
-echo "$NEW_HASH" > "$HASH_FILE"
 
 # 💾 SAVE 모드
 echo "💾 Checking ${TYPE} cache changes..."
 OLD_HASH="${LATEST_KEY: -12}"
 
-if [ "$OLD_HASH" != "$NEW_HASH" ]; then
-  echo "🧠 Change detected → deleting old caches (except latest)..."
-
-  gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
-    if [[ "$KEY" == ${PREFIX}-* && "$KEY" != "$LATEST_KEY" ]]; then
-      echo "🗑  Deleting cache ID $ID ($KEY)..."
-      yes | gh cache delete "$ID" || true
-    fi
-  done
-else
+if [ "$OLD_HASH" == "${NEW_HASH:0:12}" ]; then
   echo "✅ No cache change detected for ${TYPE}."
   exit 0
 fi
 
 # 🧠 새 키 생성
 NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
-echo "SAVE_KEY=$NEW_KEY" >> "$GITHUB_ENV"
+echo "save_key=$NEW_KEY" >> "$GITHUB_ENV"
 echo "💾 Saving new cache: ${NEW_KEY}"
+
+echo "🧠 Change detected → deleting old caches (except latest)..."
+
+gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
+  if [[ "$KEY" == ${PREFIX}-* && "$KEY" != "$LATEST_KEY" ]]; then
+    echo "🗑  Deleting cache ID $ID ($KEY)..."
+    yes | gh cache delete "$ID" || true
+  fi
+done
 
 # ✅ 실제 저장
 gh cache upload "$NEW_KEY" $CACHE_PATHS || true
