@@ -13,44 +13,56 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
     name: Kotlin Multiplatform + Android Build
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
+      # 1️⃣ 저장소 체크아웃
       - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
+      # 2️⃣ JDK 환경
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: 🧱 Init Gradle Wrapper
+      # 3️⃣ Gradle 래퍼 초기화
+      - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      - name: 🔍 Restore Core Cache
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/cache-manager.sh restore core "" $GH_TOKEN
-
-      - name: 🔍 Restore Build Cache
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/cache-manager.sh restore build ${{ github.ref_name }} $GH_TOKEN
-
-      - name: 📱 Ensure NDK
+      # 4️⃣ 캐시 관리자 스크립트 준비
+      - name: 🧰 Ensure Cache Manager Script
         run: |
-          if [ ! -d /usr/local/lib/android/sdk/ndk ]; then
-            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-          fi
+          mkdir -p scripts
+          echo "cache-manager.sh present"
+          chmod +x scripts/cache-manager.sh
 
-      - name: 🧹 Clean Workspace
-        run: git clean -fdX
+      # 5️⃣ Core(NDK+CMake) 캐시 복원
+      - name: ♻️ Restore Core Cache
+        id: core_restore
+        run: bash scripts/cache-manager.sh core restore || true
 
+      # 6️⃣ Build(Gradle+obj) 캐시 복원
+      - name: ♻️ Restore Build Cache
+        id: build_restore
+        run: bash scripts/cache-manager.sh build restore || true
+
+      # 7️⃣ Ghost 파일 정리
+      - name: 🧹 Clean Ghost Files Only
+        run: |
+          echo "🧽 Removing untracked ghost files..."
+          git clean -fdX
+          echo "✅ Removed untracked files."
+
+      # 8️⃣ 빌드 실행
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
@@ -59,33 +71,26 @@ jobs:
           echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV
           exit $EXIT_CODE
 
-      - name: 💾 Save Core Cache
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/cache-manager.sh save core "" $GH_TOKEN
-
-      - name: 💾 Save Build Cache
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/cache-manager.sh save build ${{ github.ref_name }} $GH_TOKEN
-
-      - name: 📦 Upload APK
+      # 9️⃣ 빌드 산출물 업로드
+      - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      - name: 🔢 Compute Next Tag
-        id: tag
-        run: |
-          last=$(git describe --tags --abbrev=0 2>/dev/null || echo "wk-v0.1.0")
-          base=${last%.*}; num=${last##*.}; next=$((num + 1))
-          echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
+      # 🔟 Core 캐시 저장 (해시 변경 시)
+      - name: 💾 Save Core Cache
+        if: always()
+        run: bash scripts/cache-manager.sh core save
 
-      - name: 📜 Extract Build Log Tail
+      # 11️⃣ Build 캐시 저장 (브랜치별 1개 유지)
+      - name: 💾 Save Build Cache
+        if: always()
+        run: bash scripts/cache-manager.sh build save
+
+      # 12️⃣ 로그 tail 추출
+      - name: 📜 Extract Tail of Build Log
         id: taillog
         if: always()
         run: |
@@ -93,7 +98,19 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: 🚀 Release (main only)
+      # 13️⃣ 자동 버전 계산
+      - name: 🔢 Compute Next Tag
+        id: tag
+        run: |
+          last=$(git describe --tags --abbrev=0 2>/dev/null || echo "wk-v0.1.0")
+          base=${last%.*}
+          num=${last##*.}
+          next=$((num + 1))
+          echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
+          echo "Next tag: ${base}.${next}"
+
+      # 14️⃣ GitHub Release 자동 생성
+      - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
         with:
@@ -103,14 +120,14 @@ jobs:
             🧩 **WkWhisperKey Android Build**
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
+            - **Gradle:** 8.7
+            - **NDK/CMake Hash:** ${{ steps.core_restore.outputs.restore_key }}
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### Recent Log
+            ### 🧱 Recent Build Log
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
 
             _Auto-generated by GitHub Actions_
           files: android/app/build/outputs/apk/debug/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
