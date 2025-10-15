@@ -35,31 +35,24 @@ jobs:
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 🔑 해시 기반 캐시 키 생성
-      - name: 🧮 Generate Cache Keys
-        id: keys
-        shell: bash
+      # 4️⃣ 코어툴 해시키 계산 (빌드 전)
+      - name: 🔑 Compute CoreTool Hash (Before)
+        id: corehash_before
         run: |
-          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
-          # 코어툴 전체 해시 계산
-          CORE_HASH=$(find /usr/local/lib/android/sdk -type f -maxdepth 3 -name "*" -print0 2>/dev/null | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)
-          echo "wkcore_key=wkcore-${{ runner.os }}-${CORE_HASH}" >> $GITHUB_OUTPUT
-          echo "wkbuild_key=wkbuild-${BRANCH}" >> $GITHUB_OUTPUT
-          echo "Core hash: $CORE_HASH"
-          echo "Build key: wkbuild-${BRANCH}"
+          CORE_HASH=$(find /usr/local/lib/android/sdk -type f -exec sha256sum {} \; | sort | sha256sum | cut -c1-16)
+          echo "corehash=${CORE_HASH}" >> $GITHUB_OUTPUT
+          echo "Core hash before: ${CORE_HASH}"
 
-      # 5️⃣ NDK/CMake 코어툴 캐시 복원
-      - name: ♻️ Restore Core Tool Cache
+      # 5️⃣ NDK/CMake 캐시 복원
+      - name: ♻️ Restore CoreTool Cache
         id: corecache
         uses: actions/cache/restore@v4
         with:
           path: |
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
-          restore-keys: wkcore-
-        env:
-          ACTIONS_CACHE_COMPRESSION: gzip
+          key: wkcore-Linux
+          restore-keys: wkcore-Linux
 
       # 6️⃣ NDK 확인 및 설치
       - name: 📱 Ensure NDK
@@ -70,11 +63,11 @@ jobs:
             ./gradlew clean
           fi
 
-      # 7️⃣ 고스트 정리
+      # 7️⃣ Ghost 파일 정리
       - name: 🧹 Clean Ghost Files Only
         run: git clean -fdX
 
-      # 8️⃣ Gradle / 빌드 캐시 복원
+      # 8️⃣ 빌드 캐시 복원 (브랜치별)
       - name: ♻️ Restore Build Cache
         id: buildcache
         uses: actions/cache/restore@v4
@@ -83,10 +76,8 @@ jobs:
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
-          restore-keys: wkbuild-
-        env:
-          ACTIONS_CACHE_COMPRESSION: gzip
+          key: wkbuild-${{ github.ref_name }}
+          restore-keys: wkbuild-${{ github.ref_name }}
 
       # 9️⃣ 빌드 실행
       - name: 🚀 Build Android Debug APK
@@ -94,69 +85,56 @@ jobs:
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV
           if [ $EXIT_CODE -ne 0 ]; then
             echo "Gradle build failed with exit code $EXIT_CODE"
             exit $EXIT_CODE
           fi
 
-      # 🔟 빌드 산출물 업로드
-      - name: 📦 Upload APK Artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wkwhisperkey-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+      # 🔟 코어툴 해시키 계산 (빌드 후)
+      - name: 🔑 Compute CoreTool Hash (After)
+        id: corehash_after
+        run: |
+          CORE_HASH=$(find /usr/local/lib/android/sdk -type f -exec sha256sum {} \; | sort | sha256sum | cut -c1-16)
+          echo "corehash=${CORE_HASH}" >> $GITHUB_OUTPUT
+          echo "Core hash after: ${CORE_HASH}"
 
-      # 11️⃣ 빌드 캐시 저장 (항상 최신본으로 갱신)
+      # 11️⃣ 코어툴 해시가 변경되었을 경우 기존 캐시 삭제
+      - name: ❌ Delete Old CoreTool Cache if Changed
+        if: steps.corehash_before.outputs.corehash != steps.corehash_after.outputs.corehash
+        run: |
+          echo "CoreTool hash changed → deleting old wkcore-Linux* caches"
+          gh cache delete --all --confirm --pattern "wkcore-Linux" || true
+
+      # 12️⃣ 코어툴 캐시 저장
+      - name: 💾 Save CoreTool Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+          key: wkcore-Linux
+
+      # 13️⃣ 이전 빌드 캐시 삭제 후 새로 저장
       - name: 💾 Save Build Cache
         if: always()
+        run: |
+          echo "Deleting previous build cache for branch: ${GITHUB_REF_NAME}"
+          gh cache delete --all --confirm --pattern "wkbuild-${GITHUB_REF_NAME}" || true
+          echo "Saving new build cache..."
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
-        env:
-          ACTIONS_CACHE_COMPRESSION: gzip
+          key: wkbuild-${{ github.ref_name }}
 
-      # 12️⃣ 코어툴 캐시 저장 (해시 변경 시만)
-      - name: 💾 Save Core Tool Cache
-        if: steps.corecache.outputs.cache-hit != 'true' || failure()
-        uses: actions/cache/save@v4
+      # 14️⃣ 빌드 산출물 업로드
+      - name: 📦 Upload APK Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
-        env:
-          ACTIONS_CACHE_COMPRESSION: gzip
-
-      # 13️⃣ 로그 tail 출력
-      - name: 📜 Extract Tail of Build Log
-        id: taillog
-        if: always()
-        run: |
-          echo "tail<<EOF" >> $GITHUB_OUTPUT
-          tail -n 20 build.log >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      # 14️⃣ GitHub Release (main 전용)
-      - name: 🚀 Create GitHub Release
-        if: github.ref == 'refs/heads/main' && success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: wk-v${{ github.run_number }}
-          name: "WkWhisperKey Build #${{ github.run_number }}"
-          body: |
-            ✅ Branch: **${{ github.ref_name }}**
-            🧱 Build Run: **${{ github.run_number }}**
-            🧩 Core Key: `${{ steps.keys.outputs.wkcore_key }}`
-            🧰 Build Key: `${{ steps.keys.outputs.wkbuild_key }}`
-
-            ```
-            ${{ steps.taillog.outputs.tail }}
-            ```
-          files: android/app/build/outputs/apk/debug/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: wkwhisperkey-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
