@@ -114,6 +114,7 @@ jobs:
       # ────────────── 12️⃣ Save Caches (post-build) ──────────────
       - name: 💾 Compute Core Cache Key
         id: core_save
+        if: always()
         run: bash scripts/cache-manager.sh core save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -129,6 +130,7 @@ jobs:
 
       - name: 💾 Compute Build Cache Key
         id: build_save
+        if: always()
         run: bash scripts/cache-manager.sh build save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
