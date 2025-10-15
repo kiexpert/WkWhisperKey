@@ -1,10 +1,10 @@
-name: Build & Auto-Release WkWhisperKey Android APK
+name: Build & Auto-Release WkWhisperKey (Manual Core/Build Cache)
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [ opened, synchronize, reopened ]
   workflow_dispatch:
 
 concurrency:
@@ -13,155 +13,109 @@ concurrency:
 
 jobs:
   build:
-    name: Kotlin Multiplatform + Android Build
     runs-on: ubuntu-latest
+    name: Android Build + Manual Cache System
 
     steps:
-      # 1️⃣ 저장소 체크아웃
       - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 환경
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle 래퍼 초기화
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 캐시 키 생성
-      - name: 🕒 Generate Cache Keys
-        id: keys
-        run: |
-          BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
-          OS=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-          VER=$(lsb_release -sr | tr -d '.')
-          echo "wkcore_key=wkcore-${OS}${VER}" >> $GITHUB_OUTPUT
-          echo "wkbuild_key=wkbuild-${BRANCH}" >> $GITHUB_OUTPUT
+      - name: 📁 Prepare Cache Folder
+        run: mkdir -p .cache
 
-      # 5️⃣ 코어 캐시 복원 (NDK + CMake)
-      - name: ♻️ Restore Core Cache
-        id: corecache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
-          restore-keys: wkcore-
-
-      # 6️⃣ 코어 해시 계산 (복구 후)
-      - name: 🔍 Compute Core Hash Before Build
-        id: corehash_before
+      # -------------------------
+      # ♻️ RESTORE CACHES
+      # -------------------------
+      - name: ♻️ Restore Core Tools (NDK/CMake)
         run: |
-          find /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > corelist_before.txt
-          sha256sum corelist_before.txt | cut -d ' ' -f1 > corehash_before.txt
-          echo "core_hash_before=$(cat corehash_before.txt)" >> $GITHUB_OUTPUT
-
-      # 7️⃣ NDK 확인 및 설치
-      - name: 📱 Ensure NDK
-        run: |
-          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK via sdkmanager..."
-            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-            ./gradlew clean
+          CORE_ARCHIVE=".cache/core-${RUNNER_OS}.tar.zst"
+          if [ -f "$CORE_ARCHIVE" ]; then
+            echo "📦 Restoring core cache..."
+            sudo tar --zstd -xf "$CORE_ARCHIVE" -P -C /
+            echo "✅ Core tools restored."
           else
-            echo "NDK already installed."
+            echo "⚠️ No core cache found."
           fi
 
-      # 8️⃣ 고스트 파일 정리
+          # Save pre-build hash for later comparison
+          find /usr/local/lib/android/sdk/{ndk,cmake} -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > .cache/corelist_before.txt
+          sha256sum .cache/corelist_before.txt | cut -d ' ' -f1 > .cache/corehash_before.txt
+
+      - name: ♻️ Restore Build Cache (branch)
+        run: |
+          BRANCH=${GITHUB_REF_NAME//\//-}
+          BUILD_ARCHIVE=".cache/build-${BRANCH}.tar.zst"
+          if [ -f "$BUILD_ARCHIVE" ]; then
+            echo "📦 Restoring build cache for branch $BRANCH ..."
+            tar --zstd -xf "$BUILD_ARCHIVE" -P -C .
+            echo "✅ Build cache restored."
+          else
+            echo "⚠️ No build cache found for branch $BRANCH."
+          fi
+
       - name: 🧹 Clean Ghost Files
-        run: git clean -fdX
+        run: |
+          git clean -fdX
+          echo "✅ Cleaned untracked files."
 
-      # 9️⃣ 브랜치별 빌드 캐시 복원
-      - name: ♻️ Restore Build Cache
-        id: buildcache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            android/app/build/intermediates
-            android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
-          restore-keys: wkbuild-
-
-      # 🔟 빌드 실행
+      # -------------------------
+      # 🚀 BUILD
+      # -------------------------
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV
-          exit 0
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Gradle build failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
 
-      # 11️⃣ 코어 해시 계산 (빌드 후)
-      - name: 🔍 Compute Core Hash After Build
-        id: corehash_after
-        run: |
-          find /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > corelist_after.txt
-          sha256sum corelist_after.txt | cut -d ' ' -f1 > corehash_after.txt
-          echo "core_hash_after=$(cat corehash_after.txt)" >> $GITHUB_OUTPUT
-
-      # 12️⃣ 코어 캐시 변경 감지 후 전체 정리
-      - name: 🧨 Purge Old Core Cache (if changed)
-        if: steps.corehash_before.outputs.core_hash_before != steps.corehash_after.outputs.core_hash_after
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "Core tool versions changed. Removing all old wkcore-* caches..."
-          gh cache list --limit 1000 | grep wkcore- | cut -f1 | while read id; do
-            echo "Deleting cache $id"
-            gh cache delete "$id" || true
-          done
-
-      # 13️⃣ 새 코어 캐시 저장
-      - name: 💾 Save Core Cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
-          key: ${{ steps.keys.outputs.wkcore_key }}
-
-      # 14️⃣ 이전 브랜치 빌드 캐시 삭제
-      - name: 💾 Clean Old Build Cache
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "Deleting old wkbuild caches for this branch..."
-          gh cache list --limit 1000 | grep "wkbuild-${GITHUB_REF_NAME}" | cut -f1 | while read id; do
-            gh cache delete "$id" || true
-          done
-
-      # 15️⃣ 최신 빌드 캐시 저장
-      - name: ♻️ Save Latest Build Cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            android/app/build/intermediates
-            android/app/.cxx
-          key: ${{ steps.keys.outputs.wkbuild_key }}
-
-      # 16️⃣ 빌드 로그 tail 저장
-      - name: 📜 Extract Tail of Build Log
-        id: taillog
+      # -------------------------
+      # 💾 CONDITIONAL CACHE SAVE
+      # -------------------------
+      - name: 💾 Save Core Cache (only if changed)
         if: always()
         run: |
-          echo "tail<<EOF" >> $GITHUB_OUTPUT
-          tail -n 30 build.log >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          find /usr/local/lib/android/sdk/{ndk,cmake} -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > .cache/corelist_after.txt
+          sha256sum .cache/corelist_after.txt | cut -d ' ' -f1 > .cache/corehash_after.txt
+          BEFORE=$(cat .cache/corehash_before.txt 2>/dev/null || echo none)
+          AFTER=$(cat .cache/corehash_after.txt)
+          echo "Before: $BEFORE"
+          echo "After:  $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "🗜 Core tools changed — saving new cache..."
+            CORE_ARCHIVE=".cache/core-${RUNNER_OS}.tar.zst"
+            sudo tar --zstd -cf "$CORE_ARCHIVE" -P /usr/local/lib/android/sdk/{ndk,cmake}
+            du -sh "$CORE_ARCHIVE"
+          else
+            echo "✅ Core tools unchanged — skip saving."
+          fi
 
-      # 17️⃣ APK 산출물 업로드
+      - name: 💾 Save Build Cache (branch)
+        if: always()
+        run: |
+          BRANCH=${GITHUB_REF_NAME//\//-}
+          BUILD_ARCHIVE=".cache/build-${BRANCH}.tar.zst"
+          echo "🗜 Saving build cache for branch $BRANCH ..."
+          tar --zstd -cf "$BUILD_ARCHIVE" -P android/app/build
+          du -sh "$BUILD_ARCHIVE"
+
+      # -------------------------
+      # 📦 APK UPLOAD + RELEASE
+      # -------------------------
       - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -169,7 +123,6 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 18️⃣ 자동 태그 계산
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -180,7 +133,14 @@ jobs:
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
           echo "Next tag: ${base}.${next}"
 
-      # 19️⃣ 자동 릴리즈 (main 전용)
+      - name: 📜 Extract Tail of Build Log
+        id: taillog
+        if: always()
+        run: |
+          echo "tail<<EOF" >> $GITHUB_OUTPUT
+          tail -n 20 build.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -192,10 +152,10 @@ jobs:
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
             - **Gradle:** 8.7
-            - **NDK:** 26.1.10909125
+            - **NDK/CMake:** manually cached
             - **Build Time:** ${{ github.run_started_at }}
 
-            ### 🧱 Recent Build Log
+            ### 🧱 Build Log (tail)
             ```
             ${{ steps.taillog.outputs.tail }}
             ```
