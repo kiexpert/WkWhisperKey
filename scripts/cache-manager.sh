@@ -1,69 +1,58 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-MODE=$1        # restore | save
-TYPE=$2        # core | build
-BRANCH=$3      # optional for build
-GH_TOKEN=$4
+# Usage:
+#   bash scripts/cache-manager.sh <core|build> <restore|save>
 
-CACHE_PATH_CORE="/usr/local/lib/android/sdk"
-CACHE_PATH_BUILD="$HOME/.gradle/caches android/app/build/intermediates android/app/.cxx"
-HASHFILE_DIR=".cachehash"
-mkdir -p "$HASHFILE_DIR"
+TYPE="${1:?Missing type (core|build)}"
+ACTION="${2:?Missing action (restore|save)}"
+GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
-case "$TYPE" in
-  core)
-    KEY_PREFIX="wkcore"
-    CACHE_PATH="$CACHE_PATH_CORE"
-    ;;
-  build)
-    KEY_PREFIX="wkbuild-${BRANCH}"
-    CACHE_PATH="$CACHE_PATH_BUILD"
-    ;;
-  *)
-    echo "❌ Unknown cache type: $TYPE"; exit 1;;
-esac
-
-HASHFILE="$HASHFILE_DIR/${KEY_PREFIX}-nameshash.txt"
-TMPHASH="${HASHFILE}.new"
-
-# 🔹 Generate current hash
-find $CACHE_PATH -type f -printf "%P\n" | sort | sha256sum | cut -d ' ' -f1 > "$TMPHASH"
-
-if [ "$MODE" = "restore" ]; then
-  echo "🔍 Searching latest cache for $KEY_PREFIX..."
-  gh cache list --limit 1000 --json id,key,lastAccessedAt |
-    jq -r --arg prefix "$KEY_PREFIX" '.[] | select(.key | startswith($prefix)) | [.id,.key,.lastAccessedAt] | @tsv' |
-    sort -k3 -r | tee ${HASHFILE_DIR}/${KEY_PREFIX}-all.txt | head -n1 > ${HASHFILE_DIR}/${KEY_PREFIX}-latest.txt
-
-  if [ -s ${HASHFILE_DIR}/${KEY_PREFIX}-latest.txt ]; then
-    LATEST_KEY=$(cut -f2 ${HASHFILE_DIR}/${KEY_PREFIX}-latest.txt)
-    echo "✅ Restoring cache: $LATEST_KEY"
-    echo "restore_key=$LATEST_KEY" >> $GITHUB_OUTPUT
-  else
-    echo "⚠️ No existing cache found for $KEY_PREFIX."
-  fi
+if [ "$TYPE" = "core" ]; then
+  CACHE_PATHS=(
+    "/usr/local/lib/android/sdk/ndk"
+    "/usr/local/lib/android/sdk/cmake"
+  )
+  PREFIX="wkcore"
+else
+  CACHE_PATHS=(
+    "$HOME/.gradle/caches"
+    "android/app/build"
+    "android/app/.cxx"
+  )
+  PREFIX="wkbuild-${GITHUB_REF_NAME}"
 fi
 
-if [ "$MODE" = "save" ]; then
-  NEW_HASH=$(cat "$TMPHASH")
-  OLD_HASH=$(cat "$HASHFILE" 2>/dev/null || echo "none")
+echo "🔍 Calculating content hash for ${TYPE}..."
+TMP_LIST=$(mktemp)
+for d in "${CACHE_PATHS[@]}"; do
+  [ -d "$d" ] && find "$d" -type f -printf '%P\t%s\t%T@\n'
+done | LC_ALL=C sort > "$TMP_LIST" || true
 
-  if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-    echo "🧠 Change detected. Old=$OLD_HASH New=$NEW_HASH"
-    echo "$NEW_HASH" > "$HASHFILE"
+HASH=$( [ -s "$TMP_LIST" ] && sha256sum "$TMP_LIST" | cut -d ' ' -f1 || echo "none" )
+rm -f "$TMP_LIST"
+NEW_KEY="${PREFIX}-${HASH:0:12}"
 
-    echo "🧹 Deleting old caches for $KEY_PREFIX..."
-    gh cache list --json id,key | jq -r --arg prefix "$KEY_PREFIX" \
-      '.[] | select(.key | startswith($prefix)) | .id' | while read id; do
-        gh cache delete "$id" --confirm || true
-      done
+if [ "$ACTION" = "restore" ]; then
+  echo "♻️ Restoring ${TYPE} cache for key prefix '${PREFIX}-'..."
+  echo "restore_key=${NEW_KEY}" >> "$GITHUB_OUTPUT"
+  exit 0
+fi
 
-    echo "💾 Saving new cache..."
-    CACHE_KEY="${KEY_PREFIX}-${GITHUB_RUN_ID}"
-    tar --posix -cf cache.tzst -P -C "$PWD" $CACHE_PATH --use-compress-program zstdmt
-    gh cache upload "$CACHE_KEY" cache.tzst
+if [ "$ACTION" = "save" ]; then
+  echo "💾 Checking ${TYPE} cache changes..."
+  PREV_KEYS=$(gh cache list --json id,key | jq -r ".[].key" | grep "^${PREFIX}-" || true)
+  LATEST_KEY=$(echo "$PREV_KEYS" | sort | tail -1 || true)
+
+  if [ "$LATEST_KEY" != "$NEW_KEY" ]; then
+    echo "🧠 Change detected → deleting old caches..."
+    IDS=$(gh cache list --json id,key | jq -r --arg p "${PREFIX}-" '.[] | select(.key|startswith($p)) | .id')
+    for id in $IDS; do
+      gh cache delete "$id" || true
+    done
+    echo "💾 Saving new cache: $NEW_KEY"
+    echo "key=$NEW_KEY" >> "$GITHUB_OUTPUT"
   else
-    echo "✅ No changes detected, skip saving."
+    echo "✅ No change detected for ${TYPE} cache."
   fi
 fi
