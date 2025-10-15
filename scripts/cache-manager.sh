@@ -48,7 +48,7 @@ if [ "$ACTION" = "restore" ]; then
 fi
 
 echo "🔍 Calculating content hash for ${TYPE}..."
-HASH=$(find $CACHE_PATH -type f -exec sha1sum {} + 2>/dev/null | sort | sha1sum | cut -d' ' -f1 || echo "none")
+HASH=$(find $CACHE_PATH -maxdepth 3 -type f -exec sha1sum {} + 2>/dev/null | sort | sha1sum | cut -d' ' -f1 || echo "none")
 NEW_KEY="${PREFIX}-${HASH:0:12}"
 
 if [ "$ACTION" = "save" ]; then
@@ -68,3 +68,19 @@ if [ "$ACTION" = "save" ]; then
     echo "🟢 No changes detected for ${TYPE}, skipping save."
   fi
 fi
+
+echo "🧹 Deleting old caches for ${PREFIX}..."
+OLD_LIST=$(gh cache list --key "${PREFIX}-" --json id,key,createdAt --limit 50 2>/dev/null || echo "[]")
+if [[ "$OLD_LIST" != "[]" && -n "$OLD_LIST" ]]; then
+  echo "$OLD_LIST" | jq -r '.[].id' | while read -r CID; do
+    if [ -n "$CID" ]; then
+      echo "  🗑 Removing cache ID $CID..."
+      gh cache delete "$CID" --yes || true
+    fi
+  done
+else
+  echo "  ⚪ No old caches found for ${PREFIX}."
+fi
+
+
+
