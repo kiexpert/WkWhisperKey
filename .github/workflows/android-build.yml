@@ -35,15 +35,20 @@ jobs:
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 🔑 캐시 키 생성 (브랜치별 1개)
-      - name: 🕒 Generate Cache Keys
+      # 4️⃣ 🔑 해시 기반 캐시 키 생성
+      - name: 🧮 Generate Cache Keys
         id: keys
+        shell: bash
         run: |
           BRANCH=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
-          echo "wkcore_key=wkcore-${BRANCH}" >> $GITHUB_OUTPUT
+          # 코어툴 전체 해시 계산
+          CORE_HASH=$(find /usr/local/lib/android/sdk -type f -maxdepth 3 -name "*" -print0 2>/dev/null | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)
+          echo "wkcore_key=wkcore-${{ runner.os }}-${CORE_HASH}" >> $GITHUB_OUTPUT
           echo "wkbuild_key=wkbuild-${BRANCH}" >> $GITHUB_OUTPUT
+          echo "Core hash: $CORE_HASH"
+          echo "Build key: wkbuild-${BRANCH}"
 
-      # 5️⃣ NDK/CMake 코어 툴 캐시 복원
+      # 5️⃣ NDK/CMake 코어툴 캐시 복원
       - name: ♻️ Restore Core Tool Cache
         id: corecache
         uses: actions/cache/restore@v4
@@ -53,6 +58,8 @@ jobs:
             /usr/local/lib/android/sdk/cmake
           key: ${{ steps.keys.outputs.wkcore_key }}
           restore-keys: wkcore-
+        env:
+          ACTIONS_CACHE_COMPRESSION: gzip
 
       # 6️⃣ NDK 확인 및 설치
       - name: 📱 Ensure NDK
@@ -67,7 +74,7 @@ jobs:
       - name: 🧹 Clean Ghost Files Only
         run: git clean -fdX
 
-      # 8️⃣ Gradle/빌드 캐시 복원
+      # 8️⃣ Gradle / 빌드 캐시 복원
       - name: ♻️ Restore Build Cache
         id: buildcache
         uses: actions/cache/restore@v4
@@ -78,6 +85,8 @@ jobs:
             android/app/.cxx
           key: ${{ steps.keys.outputs.wkbuild_key }}
           restore-keys: wkbuild-
+        env:
+          ACTIONS_CACHE_COMPRESSION: gzip
 
       # 9️⃣ 빌드 실행
       - name: 🚀 Build Android Debug APK
@@ -108,8 +117,10 @@ jobs:
             android/app/build/intermediates
             android/app/.cxx
           key: ${{ steps.keys.outputs.wkbuild_key }}
+        env:
+          ACTIONS_CACHE_COMPRESSION: gzip
 
-      # 12️⃣ 코어 툴 캐시 저장 (해시 변경 시만)
+      # 12️⃣ 코어툴 캐시 저장 (해시 변경 시만)
       - name: 💾 Save Core Tool Cache
         if: steps.corecache.outputs.cache-hit != 'true' || failure()
         uses: actions/cache/save@v4
@@ -118,8 +129,10 @@ jobs:
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
           key: ${{ steps.keys.outputs.wkcore_key }}
+        env:
+          ACTIONS_CACHE_COMPRESSION: gzip
 
-      # 13️⃣ 빌드 로그 tail
+      # 13️⃣ 로그 tail 출력
       - name: 📜 Extract Tail of Build Log
         id: taillog
         if: always()
@@ -138,8 +151,8 @@ jobs:
           body: |
             ✅ Branch: **${{ github.ref_name }}**
             🧱 Build Run: **${{ github.run_number }}**
-            🧩 Cache Key: `${{ steps.keys.outputs.wkbuild_key }}`
-            🧰 Core Key: `${{ steps.keys.outputs.wkcore_key }}`
+            🧩 Core Key: `${{ steps.keys.outputs.wkcore_key }}`
+            🧰 Build Key: `${{ steps.keys.outputs.wkbuild_key }}`
 
             ```
             ${{ steps.taillog.outputs.tail }}
