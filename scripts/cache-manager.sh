@@ -3,6 +3,7 @@ set -e
 
 TYPE="$1"      # core | build
 ACTION="$2"    # restore | save
+GITHUB_OUTPUT="$3"
 PREFIX="wk${TYPE}"
 BASE_DIR=$(pwd)
 CACHE_PATHS=""
@@ -43,7 +44,7 @@ calc_hash() {
 
 # ♻️ RESTORE 모드
 if [ "$ACTION" = "restore" ]; then
-  echo "RESTORE_KEY=${LATEST_KEY}" >> "$GITHUB_ENV"
+  echo "RESTORE_KEY=${LATEST_KEY}" >> "$GITHUB_OUTPUT"
   echo "🔎 Restore mode complete — no recompression."
   exit 0
 fi
@@ -64,7 +65,7 @@ fi
 
 # 🧠 새 키 생성
 NEW_KEY="${PREFIX}-${NEW_HASH}"
-echo "save_key=$NEW_KEY" >> "$GITHUB_ENV"
+echo "SAVE_KEY=$NEW_KEY" >> "$GITHUB_OUTPUT"
 echo "💾 Saving new cache: ${NEW_KEY}"
 
 echo "🧠 Change detected → deleting old caches (except latest)..."
@@ -76,7 +77,4 @@ gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID 
   fi
 done
 
-# ✅ 실제 저장
-#gh cache upload "$NEW_KEY" $CACHE_PATHS || true
-
-#echo "✅ ${TYPE^} cache saved successfully."
+exit 0
