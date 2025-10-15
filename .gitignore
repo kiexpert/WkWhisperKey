@@ -1,34 +1,142 @@
-# Gradle files
+# ───────────────────────────────
+# Core build artifacts
+*.d
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+*.exe
+*.out
+*.app
+*.pdb
+*.dwo
+*.mod
+*.smod
+*.gch
+*.pch
+*.ilk
+*.lai
+*.la
+
+# ───────────────────────────────
+# C/C++ specific
+*.elf
+*.map
+*.bin
+*.hex
+*.lst
+*.sym
+*.dump
+*.gcda
+*.gcno
+*.gcov
+
+# ───────────────────────────────
+# Kotlin / Java / Android
 .gradle/
+.idea/
 build/
-
-# Local configuration file (sdk path, etc)
+out/
 local.properties
-
-# Log/OS Files
+*.iml
+*.class
+*.apk
+*.ap_ 
+*.dex
+*.keystore
+*.jks
+*.hprof
+captures/
+.cxx/
+.externalNativeBuild/
+android/app/build/
+android/.cxx/
 *.log
 
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.aab
-*.apk
-output-metadata.json
+# ───────────────────────────────
+# Python / AI
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints/
+.venv/
+env/
+venv/
+logs/
+checkpoints/
+wandb/
+mlruns/
+runs/
+.DS_Store
 
-# IntelliJ
-*.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
+# ───────────────────────────────
+# Development / Editor
+.vscode/
+.vscode-test/
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*.rej
+*.cache
+*.tags
 
-# Keystore files
-*.jks
-*.keystore
+# ───────────────────────────────
+# GitHub Codespaces / Container
+.cache/
+.devcontainer/
+.vscode-server/
+*.code-workspace
+*.codespaces.json
+*.deb
+*.tar.zst
+*.tar.gz
 
-# Google Services (e.g. APIs or Firebase)
-google-services.json
+# ───────────────────────────────
+# Gradle cache and wrapper
+.gradle/
+~/.gradle/
+gradle-app.setting
+gradle-app-cache/
+!gradle/wrapper/gradle-wrapper.jar
 
-# Android Profiling
-*.hprof
+# ───────────────────────────────
+# Generated artifacts / profiling
+*.trace
+*.profraw
+*.profdata
+*.perf
+*.heap
+*.core
+*.log
+*.err
+*.pid
+
+# ───────────────────────────────
+# Temp / OS
+*.tmp
+*.temp
+*.bak
+Thumbs.db
+ehthumbs.db
+.DS_Store
+Desktop.ini
+$RECYCLE.BIN/
+
+# ───────────────────────────────
+# WkBitwise / WkWhisperKey specific
+wkbuild/
+wklogs/
+wkcache/
+wkout/
+bitwise-bench/
+bitwise-prof/
+wk-whisper-models/
+*.wkcache
+*.wkbench
+*.wkout
