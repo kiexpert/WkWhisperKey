@@ -24,25 +24,62 @@ jobs:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 환경
+      # 2️⃣ ☕ JDK 17
       - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle 래퍼 초기화
+      # 3️⃣ Gradle 초기화
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 🧩 브랜치별 NDK/CMake 캐시 복원
-      - name: ♻️ Restore Build Cache (NDK/CMake)
-        id: buildcache
+      # 4️⃣ ♻️ Core Tool Cache (NDK/CMake)
+      - name: ♻️ Restore Core Tool Cache
+        id: corecache
         uses: actions/cache/restore@v4
         with:
           path: |
             /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
+          key: wkcore-${{ runner.os }}-${{ hashFiles('**/sdkmanager.log') }}
+          restore-keys: |
+            wkcore-${{ runner.os }}-
+
+      # 5️⃣ 📦 NDK/CMake 확인 및 설치
+      - name: 📦 Ensure Core Tools
+        run: |
+          mkdir -p /usr/local/lib/android/sdk
+          echo "🔍 Checking Android SDK core tools..."
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --update
+          /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --list > sdkmanager.log
+          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
+            echo "Installing NDK 26.1..."
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
+          fi
+          if [ ! -d /usr/local/lib/android/sdk/cmake/3.22.1 ]; then
+            echo "Installing CMake 3.22.1..."
+            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "cmake;3.22.1"
+          fi
+          echo "✅ Core tools ready."
+
+      # 6️⃣ 💾 Core Tool Cache 재저장 (업데이트 감지 시)
+      - name: 💾 Save Core Tool Cache if changed
+        if: steps.corecache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+          key: wkcore-${{ runner.os }}-${{ hashFiles('**/sdkmanager.log') }}
+
+      # 7️⃣ ♻️ Branch Build Cache (Gradle/intermediates)
+      - name: ♻️ Restore Branch Build Cache
+        id: buildcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
@@ -50,24 +87,13 @@ jobs:
           restore-keys: |
             wkbuild-
 
-      # 5️⃣ NDK 확인 및 설치
-      - name: 📱 Ensure NDK
+      # 8️⃣ 🧹 Untracked Clean
+      - name: 🧹 Clean Ghost Files
         run: |
-          if [ ! -d /usr/local/lib/android/sdk/ndk/26.1.10909125 ]; then
-            echo "Installing NDK via sdkmanager..."
-            yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --install "ndk;26.1.10909125"
-          else
-            echo "✅ NDK already installed."
-          fi
-
-      # 6️⃣ 유령파일 제거
-      - name: 🧹 Clean Ghost Files Only
-        run: |
-          echo "🧽 Removing untracked and deleted-branch ghost files..."
           git clean -fdX
-          echo "✅ Removed untracked files, caches kept."
+          echo "✅ Untracked & ignored files removed."
 
-      # 7️⃣ 🚀 빌드 실행
+      # 9️⃣ 🚀 Build
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
@@ -76,20 +102,18 @@ jobs:
           echo "BUILD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
           exit $EXIT_CODE
 
-      # 8️⃣ 💾 캐시 저장 (성공/실패 무관)
+      # 🔟 💾 Save Branch Cache (항상 저장)
       - name: 💾 Save Branch Build Cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
-            /usr/local/lib/android/sdk/ndk
-            /usr/local/lib/android/sdk/cmake
             ~/.gradle/caches
             android/app/build/intermediates
             android/app/.cxx
           key: wkbuild-${{ github.ref_name }}
 
-      # 9️⃣ 📦 APK 업로드
+      # 11️⃣ 📦 Upload APK
       - name: 📦 Upload APK Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -97,7 +121,7 @@ jobs:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 🔟 🔢 태그 계산
+      # 12️⃣ 🔢 Compute Next Tag
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -106,8 +130,9 @@ jobs:
           num=${last##*.}
           next=$((num + 1))
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
+          echo "Next tag: ${base}.${next}"
 
-      # 11️⃣ 📜 로그 tail
+      # 13️⃣ 📜 Log tail
       - name: 📜 Extract Tail of Build Log
         id: taillog
         if: always()
@@ -116,7 +141,7 @@ jobs:
           tail -n 20 build.log >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 12️⃣ 🚀 릴리즈 (main 전용)
+      # 14️⃣ 🚀 Release (main only)
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -142,14 +167,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 🧹 머지 후 캐시 삭제 (PR 닫힐 때만)
+  # 🧹 Pull Request Merge 후 캐시 삭제
   cleanup:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - name: 🗑 Delete Branch Cache After Merge
         run: |
-          echo "🧹 Deleting cache for branch: ${{ github.event.pull_request.head.ref }}"
+          echo "🧹 Deleting branch cache: ${{ github.event.pull_request.head.ref }}"
           gh cache list --limit 50 --json id,key | \
             jq -r '.[] | select(.key=="wkbuild-${{ github.event.pull_request.head.ref }}") | .id' | \
             xargs -r -n1 gh cache delete
