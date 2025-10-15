@@ -76,6 +76,6 @@ gh cache list --json id,key | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID 
 done
 
 # ✅ 실제 저장
-gh cache upload "$NEW_KEY" $CACHE_PATHS || true
+#gh cache upload "$NEW_KEY" $CACHE_PATHS || true
 
-echo "✅ ${TYPE^} cache saved successfully."
+#echo "✅ ${TYPE^} cache saved successfully."
