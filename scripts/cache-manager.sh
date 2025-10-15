@@ -54,7 +54,8 @@ NEW_HASH=$(calc_hash "$CACHE_PATHS")
 
 # 💾 SAVE 모드
 echo "💾 Checking ${TYPE} cache changes..."
-OLD_HASH="${LATEST_KEY: -12}"
+OLD_HASH="${LATEST_KEY:7}"
+#OLD_HASH="${LATEST_KEY: -12}"
 
 if [ "$OLD_HASH" == "${NEW_HASH:0:12}" ]; then
   echo "✅ No cache change detected for ${TYPE}."
@@ -62,7 +63,7 @@ if [ "$OLD_HASH" == "${NEW_HASH:0:12}" ]; then
 fi
 
 # 🧠 새 키 생성
-NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
+NEW_KEY="${PREFIX}-${NEW_HASH}"
 echo "save_key=$NEW_KEY" >> "$GITHUB_ENV"
 echo "💾 Saving new cache: ${NEW_KEY}"
 
