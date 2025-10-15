@@ -11,6 +11,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: ${{ github.workspace }}
+    
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,17 +33,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: 🧱 Initialize Gradle Wrapper
-        run: bash scripts/init-gradle.sh
-
-      - name: 📁 Prepare Cache Folder
-        run: mkdir -p .cache
-
       # -------------------------
       # ♻️ RESTORE CACHES
       # -------------------------
       - name: ♻️ Restore Core Tools (NDK/CMake)
         run: |
+          mkdir -p $GITHUB_WORKSPACE/.cache
           CORE_ARCHIVE=".cache/core-${RUNNER_OS}.tar.zst"
           if [ -f "$CORE_ARCHIVE" ]; then
             echo "📦 Restoring core cache..."
@@ -67,8 +66,12 @@ jobs:
 
       - name: 🧹 Clean Ghost Files
         run: |
-          git clean -fdX
+          git clean -fdX -e ".cache"
           echo "✅ Cleaned untracked files."
+
+      - name: 🧱 Initialize Gradle Wrapper
+        if: false
+        run: bash scripts/init-gradle.sh
 
       # -------------------------
       # 🚀 BUILD
@@ -76,6 +79,7 @@ jobs:
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
+          bash scripts/init-gradle.sh
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
@@ -89,6 +93,7 @@ jobs:
       - name: 💾 Save Core Cache (only if changed)
         if: always()
         run: |
+          mkdir -p $GITHUB_WORKSPACE/.cache
           find /usr/local/lib/android/sdk/{ndk,cmake} -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > .cache/corelist_after.txt
           sha256sum .cache/corelist_after.txt | cut -d ' ' -f1 > .cache/corehash_after.txt
           BEFORE=$(cat .cache/corehash_before.txt 2>/dev/null || echo none)
@@ -107,6 +112,7 @@ jobs:
       - name: 💾 Save Build Cache (branch)
         if: always()
         run: |
+          mkdir -p $GITHUB_WORKSPACE/.cache
           BRANCH=${GITHUB_REF_NAME//\//-}
           BUILD_ARCHIVE=".cache/build-${BRANCH}.tar.zst"
           echo "🗜 Saving build cache for branch $BRANCH ..."
