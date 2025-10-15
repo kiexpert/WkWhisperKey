@@ -76,8 +76,8 @@ jobs:
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
-          ./gradlew clean | tee build.log
-          # ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
+          ./gradlew clean | tee build.log && exit 1
+          ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "Gradle build failed with exit code $EXIT_CODE"
