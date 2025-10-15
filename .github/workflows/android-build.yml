@@ -41,6 +41,7 @@ jobs:
         run: bash scripts/cache-manager.sh core restore
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ENV: $GITHUB_OUTPUT
 
       # ────────────── 5️⃣ Restore core cache ──────────────
       - name: ♻️ Restore Core Cache
@@ -59,6 +60,7 @@ jobs:
         run: bash scripts/cache-manager.sh build restore
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ENV: $GITHUB_OUTPUT
 
       # ────────────── 7️⃣ Restore build cache ──────────────
       - name: ♻️ Restore Build Cache
@@ -119,6 +121,7 @@ jobs:
         run: bash scripts/cache-manager.sh core save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ENV: $GITHUB_OUTPUT
 
       - name: 💾 Save Core Cache
         if: always() && steps.core_save.outputs.save_key != ''
@@ -135,6 +138,7 @@ jobs:
         run: bash scripts/cache-manager.sh build save
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ENV: $GITHUB_OUTPUT
 
       - name: 💾 Save Build Cache
         if: always() && steps.build_save.outputs.save_key != ''
