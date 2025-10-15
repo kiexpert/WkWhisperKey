@@ -3,6 +3,7 @@ package ai.willkim.wkwhisperkey.audio
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import androidx.compose.foundation.background
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
