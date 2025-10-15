@@ -16,89 +16,82 @@ jobs:
     name: Kotlin Multiplatform + Android Build
     runs-on: ubuntu-latest
 
-    env:
-      GH_TOKEN: ${{ github.token }}
-
     steps:
-      # 1️⃣ 저장소 체크아웃
+      # ────────────── 1️⃣ Checkout ──────────────
       - name: 🧩 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
 
-      # 2️⃣ JDK 환경
-      - name: ☕ Set up JDK 17
+      # ────────────── 2️⃣ JDK ──────────────
+      - name: ☕ Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # 3️⃣ Gradle 래퍼 초기화
+      # ────────────── 3️⃣ Gradle init ──────────────
       - name: 🧱 Initialize Gradle Wrapper
         run: bash scripts/init-gradle.sh
 
-      # 4️⃣ 캐시 관리자 스크립트 준비
-      - name: 🧰 Ensure Cache Manager Script
-        run: |
-          mkdir -p scripts
-          echo "cache-manager.sh present"
-          chmod +x scripts/cache-manager.sh
+      # ────────────── 4️⃣ Detect latest core cache ──────────────
+      - name: 🔍 Detect Latest Core Cache
+        id: core_meta
+        run: bash scripts/cache-manager.sh core restore
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5️⃣ Core(NDK+CMake) 캐시 복원
+      # ────────────── 5️⃣ Restore core cache ──────────────
       - name: ♻️ Restore Core Cache
-        id: core_restore
-        run: bash scripts/cache-manager.sh core restore || true
+        if: steps.core_meta.outputs.restore_key != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk
+            /usr/local/lib/android/sdk/cmake
+          key: ${{ steps.core_meta.outputs.restore_key }}
+          restore-keys: wkcore-
 
-      # 6️⃣ Build(Gradle+obj) 캐시 복원
+      # ────────────── 6️⃣ Detect latest build cache ──────────────
+      - name: 🔍 Detect Latest Build Cache
+        id: build_meta
+        run: bash scripts/cache-manager.sh build restore
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ────────────── 7️⃣ Restore build cache ──────────────
       - name: ♻️ Restore Build Cache
-        id: build_restore
-        run: bash scripts/cache-manager.sh build restore || true
-
-      # 7️⃣ Ghost 파일 정리
-      - name: 🧹 Clean Ghost Files Only
-        run: |
-          echo "🧽 Removing untracked ghost files..."
-          git clean -fdX
-          echo "✅ Removed untracked files."
-
-      # 8️⃣ 빌드 실행
+        if: steps.build_meta.outputs.restore_key != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            android/app/build/intermediates
+            android/app/.cxx
+          key: ${{ steps.build_meta.outputs.restore_key }}
+          restore-keys: wkbuild-
+      
+      # ────────────── 8️⃣ Build APK ──────────────
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          echo "exit_code=$EXIT_CODE" >> $GITHUB_ENV
-          exit $EXIT_CODE
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Gradle build failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
 
-      # 9️⃣ 빌드 산출물 업로드
-      - name: 📦 Upload APK Artifact
+      # ────────────── 9️⃣ Upload artifact ──────────────
+      - name: 📦 Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: wkwhisperkey-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
 
-      # 🔟 Core 캐시 저장 (해시 변경 시)
-      - name: 💾 Save Core Cache
-        if: always()
-        run: bash scripts/cache-manager.sh core save
-
-      # 11️⃣ Build 캐시 저장 (브랜치별 1개 유지)
-      - name: 💾 Save Build Cache
-        if: always()
-        run: bash scripts/cache-manager.sh build save
-
-      # 12️⃣ 로그 tail 추출
-      - name: 📜 Extract Tail of Build Log
-        id: taillog
-        if: always()
-        run: |
-          echo "tail<<EOF" >> $GITHUB_OUTPUT
-          tail -n 20 build.log >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      # 13️⃣ 자동 버전 계산
+      # ────────────── 🔟 Auto-version bump ──────────────
       - name: 🔢 Compute Next Tag
         id: tag
         run: |
@@ -109,7 +102,29 @@ jobs:
           echo "next_tag=${base}.${next}" >> $GITHUB_OUTPUT
           echo "Next tag: ${base}.${next}"
 
-      # 14️⃣ GitHub Release 자동 생성
+      # ────────────── 11️⃣ Extract tail log ──────────────
+      - name: 📜 Extract Tail of Build Log
+        id: taillog
+        if: always()
+        run: |
+          echo "tail<<EOF" >> $GITHUB_OUTPUT
+          tail -n 25 build.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # ────────────── 12️⃣ Save Caches (post-build) ──────────────
+      - name: 💾 Save Core Cache
+        if: always()
+        run: bash scripts/cache-manager.sh core save
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 💾 Save Build Cache
+        if: always()
+        run: bash scripts/cache-manager.sh build save
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ────────────── 13️⃣ Auto Release (main only) ──────────────
       - name: 🚀 Create GitHub Release
         if: github.ref == 'refs/heads/main' && success()
         uses: softprops/action-gh-release@v2
@@ -121,7 +136,7 @@ jobs:
             - **Branch:** ${{ github.ref_name }}
             - **Commit:** ${{ github.sha }}
             - **Gradle:** 8.7
-            - **NDK/CMake Hash:** ${{ steps.core_restore.outputs.restore_key }}
+            - **NDK:** 26.1.10909125
             - **Build Time:** ${{ github.run_started_at }}
 
             ### 🧱 Recent Build Log
@@ -131,3 +146,5 @@ jobs:
 
             _Auto-generated by GitHub Actions_
           files: android/app/build/outputs/apk/debug/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
