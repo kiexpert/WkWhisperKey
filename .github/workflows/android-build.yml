@@ -74,10 +74,9 @@ jobs:
           #./gradlew clean | tee build.log && exit 1
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "Gradle build failed with exit code $EXIT_CODE"
-            exit $EXIT_CODE
-          fi
+          if [[ $EXIT_CODE -eq 0 ]]; then exit 0; fi
+          echo "Gradle build failed with exit code $EXIT_CODE"
+          exit $EXIT_CODE
 
       # ────────────── 9️⃣ Upload artifact ──────────────
       - name: 📦 Upload APK
