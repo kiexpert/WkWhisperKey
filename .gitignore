@@ -88,7 +88,6 @@ runs/
 
 # ───────────────────────────────
 # GitHub Codespaces / Container
-.cache/
 .devcontainer/
 .vscode-server/
 *.code-workspace
