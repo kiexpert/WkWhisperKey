@@ -76,7 +76,7 @@ jobs:
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
-          ./gradlew clean | tee build.log && exit 1
+          #./gradlew clean | tee build.log && exit 1
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
@@ -121,7 +121,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 💾 Save Core Cache
-        if: always() && steps.core_save.outputs.save_key != ''
+        if: false && always() && steps.core_save.outputs.save_key != ''
         uses: actions/cache/save@v4
         with:
           path: |
