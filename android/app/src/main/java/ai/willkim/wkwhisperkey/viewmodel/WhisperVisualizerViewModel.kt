@@ -1,4 +1,4 @@
-package ai.willkim.wkwhisperkey.ui
+package ai.willkim.wkwhisperkey.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
