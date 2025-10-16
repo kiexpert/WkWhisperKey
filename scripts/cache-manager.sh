@@ -10,7 +10,7 @@ CACHE_PATHS=""
 
 # 📁 캐시 경로 정의
 if [ "$TYPE" = "core" ]; then
-  CACHE_PATHS="/usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/cmake"
+  CACHE_PATHS="/usr/local/lib/android/sdk/cmake"
 else
   CACHE_PATHS="~/.gradle/caches android/app/build/intermediates android/app/.cxx"
 fi
