@@ -125,7 +125,6 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
           key: ${{ steps.core_save.outputs.save_key }}
 
