@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.sp
+import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
 
 @Composable
 fun WhisperVisualizer(viewModel: WhisperVisualizerViewModel) {
