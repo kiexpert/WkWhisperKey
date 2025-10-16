@@ -47,8 +47,7 @@ jobs:
         if: steps.core_meta.outputs.restore_key != ''
         uses: actions/cache/restore@v4
         with:
-          path: |
-            /usr/local/lib/android/sdk/cmake
+          path: ${{ steps.core_meta.outputs.cache_path }}
           key: ${{ steps.core_meta.outputs.restore_key }}
           restore-keys: wkcore-
 
@@ -64,10 +63,7 @@ jobs:
         if: steps.build_meta.outputs.restore_key != ''
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.gradle/caches
-            android/app/build/intermediates
-            android/app/.cxx
+          path: ${{ steps.build_meta.outputs.cache_path }}
           key: ${{ steps.build_meta.outputs.restore_key }}
           restore-keys: wkbuild-
       
@@ -123,8 +119,7 @@ jobs:
         if: always() && steps.core_save.outputs.save_key != ''
         uses: actions/cache/save@v4
         with:
-          path: |
-            /usr/local/lib/android/sdk/cmake
+          path: ${{ steps.core_save.outputs.cache_path }}
           key: ${{ steps.core_save.outputs.save_key }}
 
       - name: 💾 Compute Build Cache Key
@@ -138,10 +133,7 @@ jobs:
         if: always() && steps.build_save.outputs.save_key != ''
         uses: actions/cache/save@v4
         with:
-          path: |
-            ~/.gradle/caches
-            android/app/build/intermediates
-            android/app/.cxx
+          path: ${{ steps.build_save.outputs.cache_path }}
           key: ${{ steps.build_save.outputs.save_key }}
 
       # ────────────── 13️⃣ Auto Release (main only) ──────────────
