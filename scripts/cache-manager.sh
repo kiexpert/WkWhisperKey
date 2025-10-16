@@ -66,6 +66,12 @@ fi
 echo "🧠 Change detected → new key: ${NEW_KEY}"
 echo "save_key=${NEW_KEY}" >> "$GITHUB_OUTPUT"
 
+# 👇 여기 추가
+if [ "$TYPE" = "core" ]; then
+  echo "🔧 Fixing CMake permissions before save..."
+  chmod -R 755 /usr/local/lib/android/sdk/cmake || true
+fi
+
 # 오래된 캐시 정리
 if [ -n "$LATEST_KEY" ]; then
   gh cache list --json id,key 2>/dev/null | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
