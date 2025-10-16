@@ -1,34 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ai.willkim.wkwhisperkey">
 
-    <!-- 마이크 접근 권한 -->
+    <!-- ✅ 필수 권한 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- ✅ Android 13 이하: 외부 저장소 접근 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- ✅ Android 13+ (Scoped Storage / SAF 호환) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+
+    <!-- ✅ Android 14+: SAF 기반 파일 액세스 권장 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            <category android:name="android.intent.category.OPENABLE" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CREATE_DOCUMENT" />
+            <category android:name="android.intent.category.OPENABLE" />
+        </intent>
+    </queries>
 
     <application
-        android:name=".WkApp"
         android:label="WkWhisperKey"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+        android:allowBackup="true"
+        android:supportsRtl="true">
 
-        <!-- 시각화용 런처 액티비티 -->
+        <!-- 🎙️ Whisper HUD -->
         <activity
-            android:name=".ui.WhisperHUDActivity"
+            android:name=".ui.WhisperMicHUDActivity"
             android:exported="true"
-            android:label="WkWhisper Visualizer">
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- IME 서비스 -->
-        <service
-            android:name=".WkWhisperKeyIME"
-            android:permission="android.permission.BIND_INPUT_METHOD"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-        </service>
+        <!-- 🧠 Trainer HUD -->
+        <activity
+            android:name=".ui.WkTrainerHUDActivity"
+            android:exported="true"
+            android:label="Trainer HUD" />
 
+        <!-- 📈 Analytics View -->
+        <activity
+            android:name=".ui.WkTrainerAnalyticsActivity"
+            android:exported="true"
+            android:label="Trainer Analytics" />
+
+        <!-- Whisper JNI 라이브러리 정보 -->
+        <meta-data
+            android:name="whisper.native.lib"
+            android:value="libwhisper.so" />
+
+        <!-- Whisper 로그 저장 위치 -->
+        <meta-data
+            android:name="whisper.logs.path"
+            android:value="/sdcard/WkWhisperLogs" />
     </application>
 </manifest>
