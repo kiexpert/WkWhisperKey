@@ -48,7 +48,6 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            /usr/local/lib/android/sdk/ndk
             /usr/local/lib/android/sdk/cmake
           key: ${{ steps.core_meta.outputs.restore_key }}
           restore-keys: wkcore-
