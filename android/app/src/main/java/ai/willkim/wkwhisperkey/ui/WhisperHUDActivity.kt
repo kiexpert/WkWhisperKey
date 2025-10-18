@@ -12,16 +12,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
+import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
+import ai.willkim.wkwhisperkey.whisper.native.WkSafetyBridge
 
 class WhisperHUDActivity : ComponentActivity() {
 
     private val viewModel: WhisperVisualizerViewModel by viewModels()
 
-    import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WkSafetyMonitor.initialize(this)
+        try {
+            WkSafetyMonitor.initialize(this)
+            WkSafetyBridge.registerContext(this)
+        } catch (e: UnsatisfiedLinkError) {
+            e.printStackTrace()
+        }
 
         setContent {
             MaterialTheme {
