@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <signal.h>
 #include <android/log.h>
+#include <stdio.h>
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "WkNativeSafety", __VA_ARGS__)
 
