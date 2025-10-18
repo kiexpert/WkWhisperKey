@@ -6,6 +6,7 @@ add_library(
     SHARED
     whispernet.cpp
     wk_whisper_preprocess.cpp
+    wk_safety.cpp
 )
 
 find_library(
