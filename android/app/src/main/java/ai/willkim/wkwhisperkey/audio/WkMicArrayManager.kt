@@ -9,11 +9,10 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.sqrt
 
 /**
- * WkMicArrayManager v2.2 (Build Fix)
- * ----------------------------------
- * - location 필드 API 레벨 예외처리
- * - setAudioDevice() 조건부 호출
- * - coroutineContext.isActive 로 교체
+ * WkMicArrayManager v2.3 (Compatibility Fix)
+ * ------------------------------------------
+ * - location / setAudioDevice 제거 (SDK 호환)
+ * - coroutineContext → isActive 수정
  */
 class WkMicArrayManager(
     private val context: Context,
@@ -32,8 +31,7 @@ class WkMicArrayManager(
         val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
         devices += inputs.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
         devices.forEach {
-            val loc = try { if (Build.VERSION.SDK_INT >= 31) it.location else 0 } catch (_: Exception) { 0 }
-            Log.i("MicArray", "id=${it.id}, type=${it.type}, addr=${it.address}, loc=$loc")
+            Log.i("MicArray", "id=${it.id}, type=${it.type}, addr=${it.address}")
         }
         return devices
     }
@@ -48,6 +46,7 @@ class WkMicArrayManager(
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT
                 )
+
                 val builder = AudioRecord.Builder()
                     .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setAudioFormat(
@@ -57,11 +56,11 @@ class WkMicArrayManager(
                             .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                             .build()
                     )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    builder.setAudioDevice(dev)
-                }
+
+                // setAudioDevice() 제거 — 모든 마이크 자동 배정
                 val rec = builder.build()
                 recorders[dev.id] = rec
+
                 scope.launch { captureLoop(dev.id, rec, bufSize) }
             } catch (e: Exception) {
                 Log.e("MicArray", "init fail id=${dev.id}: ${e.message}")
@@ -74,7 +73,7 @@ class WkMicArrayManager(
         val buf = ShortArray(bufSize)
         try {
             rec.startRecording()
-            while (coroutineContext.isActive) {
+            while (scope.isActive) { // coroutineContext → scope.isActive 로 교체
                 val read = rec.read(buf, 0, buf.size)
                 if (read > 0) {
                     val chunk = buf.copyOf(read)
