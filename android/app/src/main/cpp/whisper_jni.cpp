@@ -2,6 +2,17 @@
 #include <android/log.h>
 //#include "wk_safety.cpp"   // 안전 핸들러 포함
 
+#pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void register_native_safety();
+
+#ifdef __cplusplus
+}
+#endif
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_ai_willkim_wkwhisperkey_whisper_native_WhisperCppEngine_nativeTranscribe(
