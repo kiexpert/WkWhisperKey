@@ -1,6 +1,6 @@
 #include <jni.h>
 #include <android/log.h>
-#include "wk_safety.cpp"   // 안전 핸들러 포함
+//#include "wk_safety.cpp"   // 안전 핸들러 포함
 
 extern "C"
 JNIEXPORT jstring JNICALL
