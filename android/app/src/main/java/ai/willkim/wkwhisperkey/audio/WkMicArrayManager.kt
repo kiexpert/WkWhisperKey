@@ -2,121 +2,106 @@ package ai.willkim.wkwhisperkey.audio
 
 import android.content.Context
 import android.media.*
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.sqrt
 
 /**
- * WkMicArrayManager v2.3 (Compatibility Fix)
- * ------------------------------------------
- * - location / setAudioDevice 제거 (SDK 호환)
- * - coroutineContext → isActive 수정
+ * WkMicArrayManager v3.0
+ * -----------------------
+ * Single AudioRecord / Dual-channel capture (STEREO)
+ * Fold5: top+bottom mic 동시 입력용
  */
 class WkMicArrayManager(
     private val context: Context,
     private val onBuffer: (id: Int, data: ShortArray) -> Unit,
     private val onEnergyLevel: ((id: Int, level: Float) -> Unit)? = null
 ) {
-    private val recorders = ConcurrentHashMap<Int, AudioRecord>()
-    private val devices = mutableListOf<AudioDeviceInfo>()
+    private var recorder: AudioRecord? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val lastBuffers = ConcurrentHashMap<Int, ShortArray>()
+    private var lastLeft: ShortArray = shortArrayOf()
+    private var lastRight: ShortArray = shortArrayOf()
 
-    /** 마이크 목록 스캔 */
-    fun scanInputs(): List<AudioDeviceInfo> {
-        val am = context.getSystemService(AudioManager::class.java)
-        devices.clear()
-        val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
-        devices += inputs.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
-        devices.forEach {
-            Log.i("MicArray", "id=${it.id}, type=${it.type}, addr=${it.address}")
-        }
-        return devices
-    }
+    fun startStereo(sampleRate: Int = 48000) {
+        stopAll()
 
-    /** 동시 녹음 시작 */
-    fun startAll(sampleRate: Int = 16000) {
-        if (devices.isEmpty()) scanInputs()
-    
-        if (devices.isEmpty()) {
-            Log.e("MicArray", "⚠️ No microphones found.")
-            return
-        }
-    
-        // ✅ Fold5 안정모드: 첫 번째 마이크만 사용
-        val dev = devices.first()
         try {
             val bufSize = AudioRecord.getMinBufferSize(
                 sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.CHANNEL_IN_STEREO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-    
-            val builder = AudioRecord.Builder()
+
+            val format = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                .build()
+
+            recorder = AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.MIC)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build()
-                )
-    
-            val rec = builder.build()
-            recorders.clear() // 🔸 혹시 남은 레퍼런스 제거
-            recorders[dev.id] = rec
-    
-            Log.i("MicArray", "🎤 Using single mic id=${dev.id}, type=${dev.type}, addr=${dev.address}")
-    
-            scope.launch { captureLoop(dev.id, rec, bufSize) }
-    
+                .setAudioFormat(format)
+                .build()
+
+            val rec = recorder ?: return
+            scope.launch { captureLoop(rec, bufSize) }
+            Log.i("MicArray", "🎧 Stereo mic capture started (48kHz)")
         } catch (e: Exception) {
-            Log.e("MicArray", "init fail id=${dev.id}: ${e.message}")
+            Log.e("MicArray", "init fail: ${e.message}")
         }
     }
 
-    /** 개별 캡처 루프 + 에너지 계산 */
-    private suspend fun captureLoop(id: Int, rec: AudioRecord, bufSize: Int) {
+    private suspend fun captureLoop(rec: AudioRecord, bufSize: Int) {
         val buf = ShortArray(bufSize)
         try {
             rec.startRecording()
-            while (scope.isActive) { // coroutineContext → scope.isActive 로 교체
+            while (scope.isActive) {
                 val read = rec.read(buf, 0, buf.size)
                 if (read > 0) {
-                    val chunk = buf.copyOf(read)
-                    lastBuffers[id] = chunk
-                    onBuffer(id, chunk)
-                    computeEnergy(id, chunk, read)
+                    // 분리: L, R
+                    val left = ShortArray(read / 2)
+                    val right = ShortArray(read / 2)
+                    var li = 0
+                    var ri = 0
+                    for (i in 0 until read step 2) {
+                        left[li++] = buf[i]
+                        if (i + 1 < read) right[ri++] = buf[i + 1]
+                    }
+
+                    lastLeft = left
+                    lastRight = right
+
+                    // 각각 RMS 계산
+                    val energyL = calcEnergy(left)
+                    val energyR = calcEnergy(right)
+                    val mergedEnergy = ((energyL + energyR) / 2f).coerceIn(0f, 1f)
+
+                    // 콜백 (L/R 개별 버퍼도 구분 가능)
+                    onBuffer(0, left)
+                    onBuffer(1, right)
+                    onEnergyLevel?.invoke(0, mergedEnergy)
                 }
             }
         } catch (e: Exception) {
-            Log.e("MicArray", "loop error id=$id: ${e.message}")
+            Log.e("MicArray", "loop error: ${e.message}")
         } finally {
-            rec.stop()
-            rec.release()
+            try { rec.stop(); rec.release() } catch (_: Exception) {}
         }
     }
 
-    /** RMS 기반 에너지 계산 */
-    private fun computeEnergy(id: Int, buf: ShortArray, len: Int) {
+    private fun calcEnergy(buf: ShortArray): Float {
         var sum = 0.0
-        for (i in 0 until len) sum += buf[i] * buf[i]
-        val rms = sqrt(sum / len)
-        val norm = (rms / 32768.0).toFloat().coerceIn(0f, 1f)
-        onEnergyLevel?.invoke(id, norm)
+        for (s in buf) sum += s * s
+        val rms = sqrt(sum / buf.size)
+        return (rms / 32768.0).toFloat()
     }
-
-    fun getLastBuffer(id: Int): ShortArray? = lastBuffers[id]
 
     fun stopAll() {
         scope.cancel()
-        recorders.values.forEach {
+        recorder?.let {
             try { it.stop(); it.release() } catch (_: Exception) {}
         }
-        recorders.clear()
-        lastBuffers.clear()
-        Log.i("MicArray", "All microphones stopped.")
+        recorder = null
+        Log.i("MicArray", "Stereo mic stopped.")
     }
 }
