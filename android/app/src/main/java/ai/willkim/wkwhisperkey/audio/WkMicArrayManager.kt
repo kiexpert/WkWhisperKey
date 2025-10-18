@@ -2,19 +2,18 @@ package ai.willkim.wkwhisperkey.audio
 
 import android.content.Context
 import android.media.*
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * WkMicArrayManager v2.1
- * ----------------------
- * 다중 마이크 입력을 순차 탐색·동기 수집하는 매니저.
- * - Galaxy Fold5 등 3~4개 내장 마이크 자동 탐색
- * - AudioRecord 다중 병렬 수집
- * - Whisper 전처리 단계용 에너지/위상 실험 기반 확장 준비
+ * WkMicArrayManager v2.2 (Build Fix)
+ * ----------------------------------
+ * - location 필드 API 레벨 예외처리
+ * - setAudioDevice() 조건부 호출
+ * - coroutineContext.isActive 로 교체
  */
 class WkMicArrayManager(
     private val context: Context,
@@ -33,7 +32,8 @@ class WkMicArrayManager(
         val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
         devices += inputs.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
         devices.forEach {
-            Log.i("MicArray", "id=${it.id}, type=${it.type}, addr=${it.address}, loc=${it.location}")
+            val loc = try { if (Build.VERSION.SDK_INT >= 31) it.location else 0 } catch (_: Exception) { 0 }
+            Log.i("MicArray", "id=${it.id}, type=${it.type}, addr=${it.address}, loc=$loc")
         }
         return devices
     }
@@ -41,7 +41,6 @@ class WkMicArrayManager(
     /** 동시 녹음 시작 */
     fun startAll(sampleRate: Int = 16000) {
         if (devices.isEmpty()) scanInputs()
-
         for (dev in devices) {
             try {
                 val bufSize = AudioRecord.getMinBufferSize(
@@ -49,7 +48,7 @@ class WkMicArrayManager(
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT
                 )
-                val rec = AudioRecord.Builder()
+                val builder = AudioRecord.Builder()
                     .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setAudioFormat(
                         AudioFormat.Builder()
@@ -58,12 +57,12 @@ class WkMicArrayManager(
                             .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                             .build()
                     )
-                    .setAudioDevice(dev)
-                    .build()
-
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    builder.setAudioDevice(dev)
+                }
+                val rec = builder.build()
                 recorders[dev.id] = rec
                 scope.launch { captureLoop(dev.id, rec, bufSize) }
-
             } catch (e: Exception) {
                 Log.e("MicArray", "init fail id=${dev.id}: ${e.message}")
             }
@@ -75,7 +74,7 @@ class WkMicArrayManager(
         val buf = ShortArray(bufSize)
         try {
             rec.startRecording()
-            while (isActive) {
+            while (coroutineContext.isActive) {
                 val read = rec.read(buf, 0, buf.size)
                 if (read > 0) {
                     val chunk = buf.copyOf(read)
@@ -92,13 +91,10 @@ class WkMicArrayManager(
         }
     }
 
-    /** RMS 기반 에너지 계산 (0.0~1.0 정규화) */
+    /** RMS 기반 에너지 계산 */
     private fun computeEnergy(id: Int, buf: ShortArray, len: Int) {
         var sum = 0.0
-        for (i in 0 until len) {
-            val s = buf[i].toDouble()
-            sum += s * s
-        }
+        for (i in 0 until len) sum += buf[i] * buf[i]
         val rms = sqrt(sum / len)
         val norm = (rms / 32768.0).toFloat().coerceIn(0f, 1f)
         onEnergyLevel?.invoke(id, norm)
@@ -106,7 +102,6 @@ class WkMicArrayManager(
 
     fun getLastBuffer(id: Int): ShortArray? = lastBuffers[id]
 
-    /** 전체 중단 */
     fun stopAll() {
         scope.cancel()
         recorders.values.forEach {
