@@ -81,6 +81,7 @@ class WkMicArrayManager(
                     onBuffer(1, right)
                     onEnergyLevel?.invoke(0, mergedEnergy)
                 }
+                WkSafetyMonitor.heartbeat()
             }
         } catch (e: Exception) {
             Log.e("MicArray", "loop error: ${e.message}")
