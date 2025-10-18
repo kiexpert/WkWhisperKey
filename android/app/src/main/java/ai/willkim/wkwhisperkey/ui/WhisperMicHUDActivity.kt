@@ -83,7 +83,12 @@ class WhisperMicHUDActivity : Activity() {
         root.addView(btnReconnect)
         root.addView(txtMerged)
         root.addView(makeSeparator())
-        initMicSystem()
+        
+        // 🔽 추가: 권한 승인 직후 오디오 초기화 지연
+        Handler(Looper.getMainLooper()).postDelayed({
+            initMicSystem()
+        }, 600)
+        
         initComparePanel()
     }
 
