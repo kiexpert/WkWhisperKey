@@ -110,4 +110,11 @@ class WkMicArrayManager(
         // 왼쪽 채널 기준으로 반환, 필요시 right와 평균도 가능
         return if (lastLeft.isNotEmpty()) lastLeft else null
     }
+
+    fun scanInputs(): List<AudioDeviceInfo> {
+        val am = context.getSystemService(AudioManager::class.java)
+        val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
+        Log.i("WkMicArray", "🔍 found ${inputs.size} input devices")
+        return inputs
+    }
 }
