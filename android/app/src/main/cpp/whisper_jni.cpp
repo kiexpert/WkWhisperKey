@@ -2,16 +2,7 @@
 #include <android/log.h>
 //#include "wk_safety.cpp"   // 안전 핸들러 포함
 
-#pragma once
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void register_native_safety();
-
-#ifdef __cplusplus
-}
-#endif
+extern "C" void register_native_safety();
 
 extern "C"
 JNIEXPORT jstring JNICALL
