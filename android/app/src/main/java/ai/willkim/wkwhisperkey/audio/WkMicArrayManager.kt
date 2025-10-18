@@ -39,35 +39,41 @@ class WkMicArrayManager(
     /** 동시 녹음 시작 */
     fun startAll(sampleRate: Int = 16000) {
         if (devices.isEmpty()) scanInputs()
-        // ✅ 첫 번째 마이크만 활성화 (Fold5 안전모드)
-        if (devices.isNotEmpty()) {
-            val dev = devices.first()
-            try {
-                val bufSize = AudioRecord.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
+    
+        if (devices.isEmpty()) {
+            Log.e("MicArray", "⚠️ No microphones found.")
+            return
+        }
+    
+        // ✅ Fold5 안정모드: 첫 번째 마이크만 사용
+        val dev = devices.first()
+        try {
+            val bufSize = AudioRecord.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+    
+            val builder = AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build()
                 )
-        
-                val builder = AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.MIC)
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setSampleRate(sampleRate)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                            .build()
-                    )
-        
-                val rec = builder.build()
-                recorders[dev.id] = rec
-                scope.launch { captureLoop(dev.id, rec, bufSize) }
-        
-                Log.i("MicArray", "🎤 using single mic id=${dev.id} (${dev.address})")
-        
-            } catch (e: Exception) {
-                Log.e("MicArray", "init fail id=${dev.id}: ${e.message}")
-            }
+    
+            val rec = builder.build()
+            recorders.clear() // 🔸 혹시 남은 레퍼런스 제거
+            recorders[dev.id] = rec
+    
+            Log.i("MicArray", "🎤 Using single mic id=${dev.id}, type=${dev.type}, addr=${dev.address}")
+    
+            scope.launch { captureLoop(dev.id, rec, bufSize) }
+    
+        } catch (e: Exception) {
+            Log.e("MicArray", "init fail id=${dev.id}: ${e.message}")
         }
     }
 
