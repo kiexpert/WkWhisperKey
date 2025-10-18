@@ -69,16 +69,17 @@ class WhisperApiEngine(private val apiKey: String) : WhisperEngineInterface {
         val byteRate = sampleRate * 2
         val dataLen = pcmData.size + 36
         // WAV 헤더
+        // 교체할 부분만 표시
         out.writeBytes("RIFF")
         out.writeInt(Integer.reverseBytes(dataLen))
         out.writeBytes("WAVEfmt ")
         out.writeInt(Integer.reverseBytes(16))
-        out.writeShort(java.lang.Short.reverseBytes(1))
-        out.writeShort(java.lang.Short.reverseBytes(1))
+        out.writeShort(1)    // AudioFormat: PCM
+        out.writeShort(1)    // Channels: mono
         out.writeInt(Integer.reverseBytes(sampleRate))
         out.writeInt(Integer.reverseBytes(byteRate))
-        out.writeShort(java.lang.Short.reverseBytes(2))
-        out.writeShort(java.lang.Short.reverseBytes(16))
+        out.writeShort(2)    // BlockAlign
+        out.writeShort(16)   // BitsPerSample
         out.writeBytes("data")
         out.writeInt(Integer.reverseBytes(pcmData.size))
         out.write(pcmData)
