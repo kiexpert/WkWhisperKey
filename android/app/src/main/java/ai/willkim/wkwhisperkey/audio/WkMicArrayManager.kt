@@ -105,4 +105,9 @@ class WkMicArrayManager(
         recorder = null
         Log.i("MicArray", "Stereo mic stopped.")
     }
+
+    fun getLastBuffer(): ShortArray? {
+        // 왼쪽 채널 기준으로 반환, 필요시 right와 평균도 가능
+        return if (lastLeft.isNotEmpty()) lastLeft else null
+    }
 }
