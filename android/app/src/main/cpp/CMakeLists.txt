@@ -5,6 +5,7 @@ add_library(
     wkwhispercore
     SHARED
     whispernet.cpp
+    whisper_jni.cpp
     wk_whisper_preprocess.cpp
     wk_safety.cpp
 )
