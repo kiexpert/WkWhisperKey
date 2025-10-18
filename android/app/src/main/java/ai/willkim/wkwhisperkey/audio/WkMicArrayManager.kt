@@ -48,7 +48,7 @@ class WkMicArrayManager(
                 )
 
                 val builder = AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
                     .setAudioFormat(
                         AudioFormat.Builder()
                             .setSampleRate(sampleRate)
