@@ -17,8 +17,11 @@ class WhisperHUDActivity : ComponentActivity() {
 
     private val viewModel: WhisperVisualizerViewModel by viewModels()
 
+    import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WkSafetyMonitor.initialize(this)
 
         setContent {
             MaterialTheme {
