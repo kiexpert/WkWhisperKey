@@ -58,13 +58,24 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private fun startMic() {
         try {
             Toast.makeText(this, "🎤 스테레오 마이크 시작 중...", Toast.LENGTH_SHORT).show()
-
+    
             gaugeLayout.removeAllViews()
-            val fakeDevice = AudioDeviceInfo.Builder().setId(0).build()
-            addMicGauge(fakeDevice)
-
+    
+            // 임시 ID 0번 게이지 추가
+            val txt = TextView(this).apply {
+                text = "🎙️ 스테레오 마이크 (기본 입력)"
+                textSize = 16f
+            }
+            val gauge = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = 0
+            }
+            gaugeLayout.addView(txt)
+            gaugeLayout.addView(gauge)
+            micGauges[0] = gauge
+    
             micManager.startStereo()
-
+    
         } catch (e: Exception) {
             Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
             Log.e("WhisperMicHUD", "❌ startMic error", e)
