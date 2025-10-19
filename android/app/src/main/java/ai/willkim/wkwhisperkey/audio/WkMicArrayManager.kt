@@ -141,7 +141,7 @@ class WkMicArrayManager(
                 Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
                 Log.i("MicArray", msg)
             } else if (action == AudioManager.ACTION_MICROPHONE_MUTE_CHANGED) {
-                val muted = intent.getBooleanExtra(AudioManager.EXTRA_MICROPHONE_MUTE, false)
+                val muted = intent.getBooleanExtra("android.media.extra.MICROPHONE_MUTE", false)
                 val msg = if (muted) "🔇 마이크 음소거됨" else "🎙️ 마이크 활성화"
                 Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
                 Log.i("MicArray", msg)
