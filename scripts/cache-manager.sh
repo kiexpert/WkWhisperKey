@@ -7,9 +7,25 @@ GITHUB_OUTPUT="${3:-/dev/null}"
 PREFIX="wk${TYPE}"
 CACHE_PATHS=""
 
-# 📁 캐시 경로 설정
+# ────────────────────────────────────────────────
+# 🧱 1. SDK 환경 자동 세팅
+# ────────────────────────────────────────────────
 if [ "$TYPE" = "core" ]; then
-  CACHE_PATHS="/usr/local/lib/android/sdk/cmake"
+  SDK_ROOT="$HOME/.android-sdk"
+  mkdir -p "$SDK_ROOT"
+  echo "📁 SDK root ensured at $SDK_ROOT"
+  echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+  echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+
+  # 기존 시스템 라이선스 복사
+  mkdir -p "$SDK_ROOT/licenses"
+  if [ -d /usr/local/lib/android/sdk/licenses ]; then
+    cp -r /usr/local/lib/android/sdk/licenses/* "$SDK_ROOT/licenses/" 2>/dev/null || true
+    echo "📜 Copied SDK licenses from system SDK."
+  fi
+
+  CACHE_PATHS="$SDK_ROOT/cmake
+$SDK_ROOT/ndk"
 else
   CACHE_PATHS="$HOME/.gradle/caches
 android/app/build/intermediates
@@ -23,7 +39,9 @@ echo "EOF" >> "$GITHUB_OUTPUT"
 
 echo "♻️  ${ACTION^} ${TYPE} cache for prefix '${PREFIX}-'"
 
-# 🔍 최신 캐시 조회
+# ────────────────────────────────────────────────
+# 🔍 2. 최신 캐시 검색
+# ────────────────────────────────────────────────
 CACHE_INFO=$(gh cache list --limit 10 --order desc --json id,key,sizeInBytes,createdAt 2>/dev/null \
   | jq -r ".[] | select(.key|startswith(\"${PREFIX}-\")) | \"\(.key)|\(.id)|\(.sizeInBytes)|\(.createdAt)\"" \
   | head -n 1 || true)
@@ -36,23 +54,29 @@ if [ -n "$CACHE_INFO" ]; then
 else
   echo "⚠️  No cache found for ${PREFIX}"
 fi
-
-# step output
 echo "restore_key=${LATEST_KEY}" >> "$GITHUB_OUTPUT"
 
-# 🔢 해시 계산 함수 (경로+크기, depth 제한)
+# ────────────────────────────────────────────────
+# 🔢 3. 해시 계산 함수
+# ────────────────────────────────────────────────
 calc_hash() {
   local p="$1"
   find $p -maxdepth 2 -type f -printf "%p %s\n" 2>/dev/null | sort | sha256sum | cut -d ' ' -f1
 }
 
-# ♻️ 복원 모드
+# ♻️ 4. 복원 모드
 if [ "$ACTION" = "restore" ]; then
+  if [ "$TYPE" = "core" ]; then
+    echo "🔧 Ensuring SDK write permissions..."
+    chmod -R 755 "$HOME/.android-sdk" || true
+  fi
   echo "✅ Restore mode complete."
   exit 0
 fi
 
-# 💾 저장 모드
+# ────────────────────────────────────────────────
+# 💾 5. 저장 모드
+# ────────────────────────────────────────────────
 echo "🔍 Calculating hash for ${TYPE}..."
 NEW_HASH=$(calc_hash "$CACHE_PATHS" || echo "0")
 NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
@@ -66,10 +90,12 @@ fi
 echo "🧠 Change detected → new key: ${NEW_KEY}"
 echo "save_key=${NEW_KEY}" >> "$GITHUB_OUTPUT"
 
-# 👇 여기 추가
+# core 캐시 저장 전 라이선스 및 권한 정리
 if [ "$TYPE" = "core" ]; then
-  echo "🔧 Fixing CMake permissions before save..."
-  chmod -R 755 /usr/local/lib/android/sdk/cmake || true
+  echo "📜 Refreshing SDK licenses..."
+  yes | "$HOME/.android-sdk/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+  echo "🔧 Fixing permissions before save..."
+  chmod -R 755 "$HOME/.android-sdk" || true
 fi
 
 # 오래된 캐시 정리
