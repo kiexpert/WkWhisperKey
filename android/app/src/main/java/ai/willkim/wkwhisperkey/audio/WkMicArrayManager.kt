@@ -1,106 +1,103 @@
 package ai.willkim.wkwhisperkey.audio
 
+import android.content.Context
 import android.media.*
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlin.math.sqrt
 
 class WkMicArrayManager(
-    private val context: android.content.Context,
+    private val context: Context,
     private val onBuffer: (Int, ShortArray) -> Unit,
     private val onEnergyLevel: (Int, Float) -> Unit
 ) {
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private var activeRecord: AudioRecord? = null
-    private var running = false
+    private var job: Job? = null
+    private var audioRecord: AudioRecord? = null
+    private val bufferSize = AudioRecord.getMinBufferSize(
+        44100,
+        AudioFormat.CHANNEL_IN_STEREO,
+        AudioFormat.ENCODING_PCM_16BIT
+    )
 
-    /** 모든 입력 장치 목록 탐색 */
+    private val sampleRate = 44100
+    private var isRunning = false
+
+    /** 🎧 기본 스테레오 마이크 장치 탐색 */
     fun scanInputs(): List<AudioDeviceInfo> {
-        val mgr = context.getSystemService(AudioManager::class.java)
-        val inputs = mgr?.getDevices(AudioManager.GET_DEVICES_INPUTS)?.toList() ?: emptyList()
-        Log.i("MicArray", "🎧 Found ${inputs.size} input devices")
-        return inputs
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val devices = manager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+        val mics = devices.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+        Log.i("WkMicArray", "🎙️ Found ${mics.size} input devices")
+        return mics
     }
 
-    /** 폴드5 안전모드: 하나씩만 순차적으로 시도 */
-    fun startSequential(devices: List<AudioDeviceInfo>) {
-        scope.launch {
-            running = true
-            for (dev in devices) {
-                if (!running) break
-                try {
-                    startMic(dev)
-                    delay(4000L) // 4초간 수집 후 다음 장치로 전환
-                    stopMic()
-                } catch (e: Exception) {
-                    Log.e("MicArray", "❌ Device ${dev.id} start failed: ${e.message}")
+    /** 🟢 스테레오 마이크 시작 (좌우 채널 동시 수집) */
+    fun startStereo() {
+        stopAll()
+        try {
+            val stereoFormat = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(sampleRate)
+                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                .build()
+
+            audioRecord = AudioRecord.Builder()
+                .setAudioSource(MediaRecorder.AudioSource.MIC) // ✅ UNPROCESSED → MIC (보안 완화)
+                .setAudioFormat(stereoFormat)
+                .build()
+
+            audioRecord?.startRecording()
+            isRunning = true
+            Log.i("WkMicArray", "✅ Stereo mic started")
+
+            job = CoroutineScope(Dispatchers.Default).launch {
+                val buffer = ShortArray(bufferSize)
+                while (isActive && isRunning) {
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (read > 0) {
+                        onBuffer(0, buffer)
+                        val energy = calculateStereoEnergy(buffer, read)
+                        onEnergyLevel(0, energy)
+                    } else {
+                        Log.w("WkMicArray", "⚠️ Read returned $read samples")
+                        delay(200)
+                    }
                 }
-                delay(1000L) // 1초 간격
+                Log.w("WkMicArray", "🛑 Stereo mic loop stopped")
             }
-            Log.i("MicArray", "✅ Sequential mic scan complete")
+
+        } catch (e: Exception) {
+            Log.e("WkMicArray", "❌ Stereo start failed: ${e.message}")
+            isRunning = false
         }
     }
 
-    /** 단일 마이크 녹음 시작 */
-    private fun startMic(device: AudioDeviceInfo) {
-        Log.i("MicArray", "🎤 Trying ${device.id} (${device.productName})")
-        val rate = 16000
-        val bufSize = AudioRecord.getMinBufferSize(
-            rate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-
-        val fmt = AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(rate)
-            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-            .build()
-
-        // ⚙️ 보안우회: MIC 로 변경
-        val rec = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(fmt)
-            .setBufferSizeInBytes(bufSize * 2)
-            .setAudioDevice(device)
-            .build()
-
-        activeRecord = rec
-        rec.startRecording()
-
-        Log.i("MicArray", "✅ Started Mic ${device.id} ${device.productName}")
-        scope.launch { readLoop(device.id, rec) }
-    }
-
-    private suspend fun readLoop(id: Int, rec: AudioRecord) {
-        val buf = ShortArray(2048)
-        while (running) {
-            val read = rec.read(buf, 0, buf.size)
-            if (read <= 0) {
-                Log.w("MicArray", "⚠️ Mic $id returned $read samples")
-                delay(200)
-                continue
-            }
-            onBuffer(id, buf)
-            val energy = sqrt(buf.take(read).sumOf { (it * it).toDouble() } / read).toFloat() / 32768f
-            onEnergyLevel(id, energy)
-        }
-    }
-
-    fun stopMic() {
-        activeRecord?.apply {
-            try {
-                stop()
-                release()
-                Log.i("MicArray", "🛑 Mic stopped and released")
-            } catch (_: Exception) {}
-        }
-        activeRecord = null
-    }
-
+    /** 🔴 정지 및 자원 해제 */
     fun stopAll() {
-        running = false
-        stopMic()
-        scope.cancel()
+        isRunning = false
+        job?.cancel()
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
+        Log.i("WkMicArray", "🧹 Mic resources released")
+    }
+
+    /** 🎚️ 에너지 계산 (좌우 평균 RMS) */
+    private fun calculateStereoEnergy(buffer: ShortArray, read: Int): Float {
+        if (read < 4) return 0f
+        var leftSum = 0.0
+        var rightSum = 0.0
+        var count = 0
+        var i = 0
+        while (i < read - 1) {
+            leftSum += buffer[i].toDouble() * buffer[i]
+            rightSum += buffer[i + 1].toDouble() * buffer[i + 1]
+            count++
+            i += 2
+        }
+        val rmsL = sqrt(leftSum / count)
+        val rmsR = sqrt(rightSum / count)
+        val norm = (rmsL + rmsR) / 32768.0
+        return norm.toFloat().coerceIn(0f, 1f)
     }
 }
