@@ -225,7 +225,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             }
 
             val left = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100; progress = 0
+                max = 100; progress = 0; scaleX = -1
             }
             val right = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100; progress = 0
@@ -237,7 +237,9 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             root.addView(line)
 
             val valueText = TextView(act).apply {
-               this.text = "AVG 0.0 dB | L 0.0 dB, φ 0° | R 0.0 dB, φ 0°"
+                text = "AVG 0.0 dB | L 0.0 dB, φ 0° | R 0.0 dB, φ 0°"
+                textAlignment = TextView.TEXT_ALIGNMENT_CENTER   // 중앙 정렬
+                gravity = Gravity.CENTER_HORIZONTAL              // 가로 가운데 정렬
             }
             root.addView(valueText)
 
