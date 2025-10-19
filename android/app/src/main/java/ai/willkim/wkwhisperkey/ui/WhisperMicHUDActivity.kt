@@ -1,103 +1,148 @@
-package ai.willkim.wkwhisperkey.audio
+package ai.willkim.wkwhisperkey.ui
 
-import android.content.Context
-import android.media.*
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.os.*
 import android.util.Log
-import kotlinx.coroutines.*
-import kotlin.math.sqrt
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
+import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
+import kotlin.math.roundToInt
 
-class WkMicArrayManager(
-    private val context: Context,
-    private val onBuffer: (Int, ShortArray) -> Unit,
-    private val onEnergyLevel: (Int, Float) -> Unit
-) {
-    private var job: Job? = null
-    private var audioRecord: AudioRecord? = null
-    private val bufferSize = AudioRecord.getMinBufferSize(
-        44100,
-        AudioFormat.CHANNEL_IN_STEREO,
-        AudioFormat.ENCODING_PCM_16BIT
-    )
+class WhisperMicHUDActivity : AppCompatActivity() {
 
-    private val sampleRate = 44100
-    private var isRunning = false
+    private lateinit var micManager: WkMicArrayManager
+    private val micGauges = mutableMapOf<Int, ProgressBar>()
+    private lateinit var gaugeLayout: LinearLayout
+    private lateinit var txtEnergy: TextView
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** 🎧 기본 스테레오 마이크 장치 탐색 */
-    fun scanInputs(): List<AudioDeviceInfo> {
-        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val devices = manager.getDevices(AudioManager.GET_DEVICES_INPUTS)
-        val mics = devices.filter { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
-        Log.i("WkMicArray", "🎙️ Found ${mics.size} input devices")
-        return mics
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+        }
+        txtEnergy = TextView(this).apply { text = "통합 채널 에너지: 0%" }
+        layout.addView(txtEnergy)
+        gaugeLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        layout.addView(gaugeLayout)
+        setContentView(layout)
+
+        // ✅ 권한 확인 및 요청
+        ensureMicPermission()
+
+        WkSafetyMonitor.initialize(this)
+        micManager = WkMicArrayManager(
+            this,
+            onBuffer = { id, _ -> WkSafetyMonitor.heartbeat() },
+            onEnergyLevel = { id, level -> updateMicEnergy(id, level) }
+        )
+
+        // 권한 허용 직후 약간의 지연 후 마이크 스캔
+        mainHandler.postDelayed({ startMic() }, 600)
     }
 
-    /** 🟢 스테레오 마이크 시작 (좌우 채널 동시 수집) */
-    fun startStereo() {
-        stopAll()
+    private fun xstartMic() {
         try {
-            val stereoFormat = AudioFormat.Builder()
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(sampleRate)
-                .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-                .build()
-
-            audioRecord = AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC) // ✅ UNPROCESSED → MIC (보안 완화)
-                .setAudioFormat(stereoFormat)
-                .build()
-
-            audioRecord?.startRecording()
-            isRunning = true
-            Log.i("WkMicArray", "✅ Stereo mic started")
-
-            job = CoroutineScope(Dispatchers.Default).launch {
-                val buffer = ShortArray(bufferSize)
-                while (isActive && isRunning) {
-                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                    if (read > 0) {
-                        onBuffer(0, buffer)
-                        val energy = calculateStereoEnergy(buffer, read)
-                        onEnergyLevel(0, energy)
-                    } else {
-                        Log.w("WkMicArray", "⚠️ Read returned $read samples")
-                        delay(200)
-                    }
-                }
-                Log.w("WkMicArray", "🛑 Stereo mic loop stopped")
-            }
-
+            Toast.makeText(this, "🎤 마이크 스캔 중...", Toast.LENGTH_SHORT).show()
+            val inputs = micManager.scanInputs()
+            gaugeLayout.removeAllViews()
+            for (d in inputs) addMicGauge(d)
+            micManager.startStereo()
         } catch (e: Exception) {
-            Log.e("WkMicArray", "❌ Stereo start failed: ${e.message}")
-            isRunning = false
+            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    /** 🔴 정지 및 자원 해제 */
-    fun stopAll() {
-        isRunning = false
-        job?.cancel()
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
-        Log.i("WkMicArray", "🧹 Mic resources released")
+    private fun startMic() {
+        try {
+            Toast.makeText(this, "🎤 마이크 순차 스캔 시작...", Toast.LENGTH_SHORT).show()
+            val inputs = micManager.scanInputs()
+            gaugeLayout.removeAllViews()
+            for (d in inputs) addMicGauge(d)
+            micManager.startSequential(inputs)   // ✅ 수정된 부분
+        } catch (e: Exception) {
+            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
-    /** 🎚️ 에너지 계산 (좌우 평균 RMS) */
-    private fun calculateStereoEnergy(buffer: ShortArray, read: Int): Float {
-        if (read < 4) return 0f
-        var leftSum = 0.0
-        var rightSum = 0.0
-        var count = 0
-        var i = 0
-        while (i < read - 1) {
-            leftSum += buffer[i].toDouble() * buffer[i]
-            rightSum += buffer[i + 1].toDouble() * buffer[i + 1]
-            count++
-            i += 2
+    private fun addMicGauge(dev: AudioDeviceInfo) {
+        val id = dev.id
+        val name = dev.productName ?: "Mic"
+        val txt = TextView(this).apply { text = "🎙️ Mic $id ($name)" }
+        val gauge = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
         }
-        val rmsL = sqrt(leftSum / count)
-        val rmsR = sqrt(rightSum / count)
-        val norm = (rmsL + rmsR) / 32768.0
-        return norm.toFloat().coerceIn(0f, 1f)
+        gaugeLayout.addView(txt)
+        gaugeLayout.addView(gauge)
+        micGauges[id] = gauge
+    }
+
+    private fun updateMicEnergy(id: Int, level: Float) {
+        val percent = (level * 100).roundToInt().coerceIn(0, 100)
+        mainHandler.post {
+            txtEnergy.text = "통합 채널 에너지: ${percent}%"
+            micGauges[id]?.progress = percent
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        registerReceiver(
+            micManager.deviceReceiver,
+            micManager.deviceFilter
+        )
+    }
+
+    override fun onPause() {
+        super.onPause()
+        try {
+            unregisterReceiver(micManager.deviceReceiver)
+        } catch (_: Exception) {}
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        micManager.stopAll()
+        WkSafetyMonitor.stop()
+    }
+
+    // ✅ 권한 체크 함수
+    private fun ensureMicPermission() {
+        val permission = Manifest.permission.RECORD_AUDIO
+        if (ContextCompat.checkSelfPermission(this, permission)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(permission), 101)
+        } else {
+            Log.i("Permission", "🎙️ Mic permission already granted")
+        }
+    }
+
+    // ✅ 권한 요청 결과 처리
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "🎤 마이크 권한 허용됨", Toast.LENGTH_SHORT).show()
+                mainHandler.postDelayed({ startMic() }, 500)
+            } else {
+                Toast.makeText(this, "❌ 마이크 권한이 필요합니다", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 }
