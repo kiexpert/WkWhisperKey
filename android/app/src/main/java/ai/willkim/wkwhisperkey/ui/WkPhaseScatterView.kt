@@ -49,7 +49,8 @@ class WkPhaseScatterView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
 
-        fun mapX(phi: Float) = (w / 2f) + (phi / 180f) * (w / 2f)
+        //fun mapX(phi: Float) = (w / 2f) + (phi / 180f) * (w / 2f)
+        fun mapX(phi: Float) = (w / 2f) - (phi / 180f) * (w / 2f)
 
         val frames = if (filled) maxFrames else frameIndex
         val start = if (filled) frameIndex else 0
