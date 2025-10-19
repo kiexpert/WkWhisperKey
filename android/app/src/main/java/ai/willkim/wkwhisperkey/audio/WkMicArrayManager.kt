@@ -117,4 +117,24 @@ class WkMicArrayManager(
         Log.i("WkMicArray", "🔍 found ${inputs.size} input devices")
         return inputs
     }
+
+    val deviceFilter = IntentFilter(AudioManager.ACTION_HEADSET_PLUG).apply {
+        addAction(AudioManager.ACTION_MICROPHONE_MUTE_CHANGED)
+    }
+    val deviceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            if (action == AudioManager.ACTION_HEADSET_PLUG) {
+                val state = intent.getIntExtra("state", -1)
+                val msg = if (state == 1) "🎧 외부 마이크 연결됨" else "🔌 외부 마이크 해제됨"
+                Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                Log.i("MicArray", msg)
+            } else if (action == AudioManager.ACTION_MICROPHONE_MUTE_CHANGED) {
+                val muted = intent.getBooleanExtra(AudioManager.EXTRA_MICROPHONE_MUTE, false)
+                val msg = if (muted) "🔇 마이크 음소거됨" else "🎙️ 마이크 활성화"
+                Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                Log.i("MicArray", msg)
+            }
+        }
+    }
 }
