@@ -225,7 +225,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             }
 
             val left = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100; progress = 0; scaleX = -1
+                max = 100; progress = 0; scaleX = -1f
             }
             val right = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100; progress = 0
