@@ -249,10 +249,10 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             line.addView(right, lp)
             root.addView(line)
 
-            val values = TextView(act).apply { this.text = "AVG 0.0 dB | L 0.0 dB, φ 0° | R 0.0 dB, φ 0°" }
-            root.addView(values)
+            val valuesText = TextView(act).apply { this.text = "AVG 0.0 dB | L 0.0 dB, φ 0° | R 0.0 dB, φ 0°" }
+            root.addView(valuesText)
 
-            return Row(label, left, right, values)
+            return Row(label, left, right, valuesText)
         }
     }
 }
