@@ -7,8 +7,10 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioManager.*
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.*
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
