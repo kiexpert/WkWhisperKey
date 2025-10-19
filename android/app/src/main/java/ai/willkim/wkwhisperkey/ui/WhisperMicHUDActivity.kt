@@ -26,60 +26,58 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ---------- 기본 UI ----------
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
-        txtEnergy = TextView(this).apply { text = "통합 채널 에너지: 0%" }
-        layout.addView(txtEnergy)
-        gaugeLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        txtEnergy = TextView(this).apply {
+            text = "통합 채널 에너지: 0%"
+            textSize = 18f
         }
+        layout.addView(txtEnergy)
+        gaugeLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         layout.addView(gaugeLayout)
         setContentView(layout)
+        // ----------------------------
 
-        // ✅ 권한 확인 및 요청
         ensureMicPermission()
 
         WkSafetyMonitor.initialize(this)
         micManager = WkMicArrayManager(
             this,
-            onBuffer = { id, _ -> WkSafetyMonitor.heartbeat() },
+            onBuffer = { _, _ -> WkSafetyMonitor.heartbeat() },
             onEnergyLevel = { id, level -> updateMicEnergy(id, level) }
         )
 
-        // 권한 허용 직후 약간의 지연 후 마이크 스캔
-        mainHandler.postDelayed({ startMic() }, 600)
+        mainHandler.postDelayed({ startMic() }, 800)
     }
 
-    private fun xstartMic() {
-        try {
-            Toast.makeText(this, "🎤 마이크 스캔 중...", Toast.LENGTH_SHORT).show()
-            val inputs = micManager.scanInputs()
-            gaugeLayout.removeAllViews()
-            for (d in inputs) addMicGauge(d)
-            micManager.startStereo()
-        } catch (e: Exception) {
-            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
+    // ---------- 마이크 시작 ----------
     private fun startMic() {
         try {
-            Toast.makeText(this, "🎤 마이크 순차 스캔 시작...", Toast.LENGTH_SHORT).show()
-            val inputs = micManager.scanInputs()
+            Toast.makeText(this, "🎤 스테레오 마이크 시작 중...", Toast.LENGTH_SHORT).show()
+
             gaugeLayout.removeAllViews()
-            for (d in inputs) addMicGauge(d)
-            micManager.startSequential(inputs)   // ✅ 수정된 부분
+            val fakeDevice = AudioDeviceInfo.Builder().setId(0).build()
+            addMicGauge(fakeDevice)
+
+            micManager.startStereo()
+
         } catch (e: Exception) {
             Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e("WhisperMicHUD", "❌ startMic error", e)
         }
     }
 
+    // ---------- 게이지 추가 ----------
     private fun addMicGauge(dev: AudioDeviceInfo) {
         val id = dev.id
-        val name = dev.productName ?: "Mic"
-        val txt = TextView(this).apply { text = "🎙️ Mic $id ($name)" }
+        val txt = TextView(this).apply {
+            text = "🎙️ 스테레오 마이크 (id=$id)"
+            textSize = 16f
+        }
         val gauge = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
@@ -89,6 +87,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         micGauges[id] = gauge
     }
 
+    // ---------- 에너지 업데이트 ----------
     private fun updateMicEnergy(id: Int, level: Float) {
         val percent = (level * 100).roundToInt().coerceIn(0, 100)
         mainHandler.post {
@@ -97,39 +96,19 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        registerReceiver(
-            micManager.deviceReceiver,
-            micManager.deviceFilter
-        )
-    }
-
-    override fun onPause() {
-        super.onPause()
-        try {
-            unregisterReceiver(micManager.deviceReceiver)
-        } catch (_: Exception) {}
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        micManager.stopAll()
-        WkSafetyMonitor.stop()
-    }
-
-    // ✅ 권한 체크 함수
+    // ---------- 권한 확인 ----------
     private fun ensureMicPermission() {
         val permission = Manifest.permission.RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(this, permission)
-            != PackageManager.PERMISSION_GRANTED) {
+            != PackageManager.PERMISSION_GRANTED
+        ) {
             ActivityCompat.requestPermissions(this, arrayOf(permission), 101)
         } else {
             Log.i("Permission", "🎙️ Mic permission already granted")
         }
     }
 
-    // ✅ 권한 요청 결과 처리
+    // ---------- 권한 요청 결과 ----------
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -144,5 +123,12 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 Toast.makeText(this, "❌ 마이크 권한이 필요합니다", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // ---------- 생명주기 ----------
+    override fun onDestroy() {
+        super.onDestroy()
+        micManager.stopAll()
+        WkSafetyMonitor.stop()
     }
 }
