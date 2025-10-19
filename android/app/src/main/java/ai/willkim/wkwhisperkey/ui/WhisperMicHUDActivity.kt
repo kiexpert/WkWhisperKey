@@ -41,6 +41,8 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     )
     private val rows = mutableListOf<Row>()
 
+    private lateinit var tracker: SpeakerTracker
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(ui.root)
@@ -54,6 +56,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         ensureMicPermission()
         WkSafetyMonitor.initialize(this)
+        tracker = SpeakerTracker()
 
         micManager = WkMicArrayManager(
             this,
@@ -120,8 +123,29 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val resR = analyzeBands(repR)
         val resA = analyzeBands(AVG)
 
+        // --- 화자분석 (사양서 기반) ---
+        val bandsList = mutableListOf<Band>()
+        for (k in bands.indices) {
+            val (lMag, lPhase) = resL[k]
+            val (rMag, rPhase) = resR[k]
+            var dphi = Math.toRadians(rPhase - lPhase)
+            if (dphi > Math.PI) dphi -= 2.0 * Math.PI
+            if (dphi < -Math.PI) dphi += 2.0 * Math.PI
+            val magLin = 0.5 * (lMag + rMag)
+            bandsList += Band(bands[k], dphi, magLin)
+        }
+
+        val (tau, r2) = estimateTdoa(bandsList)
+        val avgDb = resA.map { toDbSpl(it.first) }.average()
+        val prevSide = tracker.side
+        val newSide = tracker.update(tau, r2, avgDb)
+        val side = if (tracker.allowHandover(prevSide, newSide)) newSide else prevSide
+
+        val token = packToken(resA.map { toDbSpl(it.first) }.toDoubleArray())
+
         // UI 업데이트
         main.post {
+            ui.header.text = "τ=${"%.0f".format(tracker.tauUs)}µs | R²=${"%.2f".format(tracker.r2)} | 화자=${tracker.side} | Token=0x${token.toString(16).uppercase()}"
             for (k in bands.indices) {
                 val row = rows[k]
                 val (lMag, lPhase) = resL[k]
@@ -132,7 +156,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 val rDb = toDbSpl(rMag)
                 val aDb = toDbSpl(aMag)
 
-                // 위상차 계산 및 시프트 (–180°~180° → ±30px)
                 var dPhi = rPhase - lPhase
                 if (dPhi > 180) dPhi -= 360.0
                 if (dPhi < -180) dPhi += 360.0
@@ -140,16 +163,14 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
                 row.label.translationX = offsetPx
                 row.values.translationX = offsetPx
-
                 row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt()
                 row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt()
-
-                row.values.text =
-                    "AVG ${fmtDb(aDb)} | L ${fmtDb(lDb)}, φ ${fmtDeg(lPhase)}° | R ${fmtDb(rDb)}, φ ${fmtDeg(rPhase)}° | Δφ ${fmtDeg(dPhi)}°"
+                row.values.text = "AVG ${fmtDb(aDb)} | L ${fmtDb(lDb)}, φ ${fmtDeg(lPhase)}° | R ${fmtDb(rDb)}, φ ${fmtDeg(rPhase)}° | Δφ ${fmtDeg(dPhi)}°"
             }
         }
     }
 
+    // ---------- FFT 밴드 분석 ----------
     private fun analyzeBands(x: DoubleArray): List<Pair<Double, Double>> {
         val Nlocal = x.size
         val out = ArrayList<Pair<Double, Double>>(bands.size)
@@ -183,6 +204,91 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private fun fmtDb(v: Double) = String.format("%.1f dB", v)
     private fun fmtDeg(v: Double) = String.format("%.0f", v)
 
+    // ---------- 화자추정/토큰 ----------
+
+    data class Band(val f: Double, val dphi: Double, val mag: Double)
+
+    private fun estimateTdoa(bands: List<Band>): Pair<Double, Double> {
+        val w = bands.map { it.mag * it.mag }
+        val num = bands.indices.sumOf { w[it] * bands[it].f * bands[it].dphi }
+        val den = bands.indices.sumOf { w[it] * bands[it].f * bands[it].f }
+        var tau = (num / den) / (2.0 * Math.PI)
+        val step = 2.0e-5
+        val span = 30
+        var bestTau = tau; var bestJ = Double.MAX_VALUE
+        for (m in -span..span) {
+            val tt = tau + m * step
+            var J = 0.0
+            for (i in bands.indices) {
+                val err = angdiff(bands[i].dphi - 2.0 * Math.PI * bands[i].f * tt)
+                J += w[i] * err * err
+            }
+            if (J < bestJ) { bestJ = J; bestTau = tt }
+        }
+        var re = 0.0; var im = 0.0; val wsum = w.sum()
+        for (i in bands.indices) {
+            val e = angdiff(bands[i].dphi - 2.0 * Math.PI * bands[i].f * bestTau)
+            re += w[i] * cos(e); im += w[i] * sin(e)
+        }
+        val R = sqrt(re*re + im*im) / wsum
+        return bestTau to R*R
+    }
+
+    private fun angdiff(x: Double): Double {
+        var y = x % (2.0 * Math.PI)
+        if (y >  Math.PI) y -= 2.0 * Math.PI
+        if (y < -Math.PI) y += 2.0 * Math.PI
+        return y
+    }
+
+    private class SpeakerTracker(
+        private val tauCenterUs: Double = 80.0,
+        private val tauHandoverUs: Double = 150.0,
+        private val ema: Double = 0.2,
+        private val minR2: Double = 0.85,
+        private val minDb: Double = 20.0
+    ) {
+        enum class Side { LEFT, CENTER, RIGHT, UNKNOWN }
+        var tauUs: Double = 0.0; private set
+        var side: Side = Side.UNKNOWN; private set
+        var r2: Double = 0.0; private set
+
+        fun update(tau: Double, r2in: Double, avgDb: Double): Side {
+            if (r2in < minR2 || avgDb < minDb) return side
+            tauUs = (1.0 - ema) * tauUs + ema * (tau * 1e6)
+            r2 = r2in
+            val absTau = abs(tauUs)
+            side = when {
+                absTau < tauCenterUs -> Side.CENTER
+                tauUs > 0 -> Side.LEFT
+                else -> Side.RIGHT
+            }
+            return side
+        }
+
+        fun allowHandover(prev: Side, next: Side): Boolean {
+            if (prev == next) return true
+            return abs(tauUs) > tauHandoverUs
+        }
+    }
+
+    private fun energyTo2bit(db: Double): Int = when {
+        db < -55 -> 0
+        db < -40 -> 1
+        db < -25 -> 2
+        else -> 3
+    }
+
+    private fun packToken(energiesDb: DoubleArray): Int {
+        var t = 0
+        for (i in 0 until 8) {
+            val e2 = energyTo2bit(energiesDb[i])
+            t = t or (e2 shl (i*2))
+        }
+        return t and 0xFFFF
+    }
+
+    // ---------- 공용 ----------
     private fun ensureMicPermission() {
         val p = Manifest.permission.RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED)
@@ -207,42 +313,28 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
-        val title = TextView(act).apply {
-            textSize = 18f
+        val title = TextView(act).apply { textSize = 18f }.also { root.addView(it) }
+        val header = TextView(act).apply {
+            textSize = 14f; gravity = Gravity.CENTER_HORIZONTAL
         }.also { root.addView(it) }
         val center = TextView(act).apply {
-            textSize = 14f
-            gravity = Gravity.CENTER_HORIZONTAL
+            textSize = 14f; gravity = Gravity.CENTER_HORIZONTAL
         }.also { root.addView(it) }
 
         fun addBandRow(text: String): Row {
             val label = TextView(act).apply { this.text = text; textSize = 15f }
             root.addView(label)
-
-            val line = LinearLayout(act).apply {
-                orientation = LinearLayout.HORIZONTAL
-                weightSum = 2f
-            }
-
-            val left = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100; progress = 0; scaleX = -1f
-            }
-            val right = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100; progress = 0
-            }
-
+            val line = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+            val left = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0; scaleX = -1f }
+            val right = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            line.addView(left, lp)
-            line.addView(right, lp)
+            line.addView(left, lp); line.addView(right, lp)
             root.addView(line)
-
             val valueText = TextView(act).apply {
                 this.text = "AVG 0.0 dB | L 0.0 dB, φ 0° | R 0.0 dB, φ 0°"
-                textAlignment = TextView.TEXT_ALIGNMENT_CENTER   // 중앙 정렬
-                gravity = Gravity.CENTER_HORIZONTAL              // 가로 가운데 정렬
+                textAlignment = TextView.TEXT_ALIGNMENT_CENTER; gravity = Gravity.CENTER_HORIZONTAL
             }
             root.addView(valueText)
-
             return Row(label, left, right, valueText)
         }
     }
