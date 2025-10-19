@@ -19,17 +19,16 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
     private lateinit var gaugeLayout: LinearLayout
+    private lateinit var txtSummary: TextView
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // 평균 + 좌 + 우 텍스트
-    private lateinit var txtAvg: TextView
-    private lateinit var txtLeft: TextView
-    private lateinit var txtRight: TextView
+    private data class ChannelGauge(
+        val label: TextView,
+        val bar: ProgressBar,
+        val value: TextView
+    )
 
-    // 게이지 3개
-    private lateinit var gaugeAvg: ProgressBar
-    private lateinit var gaugeLeft: ProgressBar
-    private lateinit var gaugeRight: ProgressBar
+    private val gauges = mutableMapOf<String, ChannelGauge>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,75 +38,112 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             setPadding(16, 16, 16, 16)
         }
 
-        // 평균 음원 게이지
-        txtAvg = TextView(this).apply { text = "평균 음원 (RMSavg)" }
-        gaugeAvg = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progress = 0
+        txtSummary = TextView(this).apply {
+            text = "루트화자 로그 게이지 (평균 / 좌대표 / 우대표)"
+            textSize = 18f
         }
-        layout.addView(txtAvg)
-        layout.addView(gaugeAvg)
+        layout.addView(txtSummary)
 
-        // 좌 마이크 대표
-        txtLeft = TextView(this).apply { text = "좌 대표 음원 (L-avg)" }
-        gaugeLeft = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progress = 0
-        }
-        layout.addView(txtLeft)
-        layout.addView(gaugeLeft)
-
-        // 우 마이크 대표
-        txtRight = TextView(this).apply { text = "우 대표 음원 (R-avg)" }
-        gaugeRight = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progress = 0
-        }
-        layout.addView(txtRight)
-        layout.addView(gaugeRight)
-
+        gaugeLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        layout.addView(gaugeLayout)
         setContentView(layout)
 
         ensureMicPermission()
+        setupGaugeUI()
 
         WkSafetyMonitor.initialize(this)
         micManager = WkMicArrayManager(
             this,
-            onBuffer = { _, _ -> WkSafetyMonitor.heartbeat() },
-            onEnergyLevel = { _, level -> updateMicEnergy(level) }
+            onBuffer = { _, buffer -> updateWaveEnergy(buffer) },
+            onEnergyLevel = { _, _ -> }
         )
 
-        mainHandler.postDelayed({ micManager.startStereo() }, 800)
+        mainHandler.postDelayed({ startMic() }, 800)
     }
 
-    // 🟢 에너지 업데이트
-    private fun updateMicEnergy(level: Float) {
-        // WkMicArrayManager에서 통합 level만 넘어오므로 L/R 계산 루틴을 직접 넣음
-        val leftEnergy = micManager.lastLeftEnergy
-        val rightEnergy = micManager.lastRightEnergy
-        val avg = (leftEnergy + rightEnergy) / 2f
+    private fun setupGaugeUI() {
+        fun addGauge(label: String): ChannelGauge {
+            val name = TextView(this).apply { text = label; textSize = 16f }
+            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = 0
+            }
+            val valTxt = TextView(this).apply { text = "RMS: 0.000" }
+            gaugeLayout.addView(name)
+            gaugeLayout.addView(bar)
+            gaugeLayout.addView(valTxt)
+            return ChannelGauge(name, bar, valTxt)
+        }
+        gauges["avg"] = addGauge("🎧 평균음")
+        gauges["left"] = addGauge("🎙️ 좌대표")
+        gauges["right"] = addGauge("🎙️ 우대표")
+    }
 
-        val diffL = (leftEnergy - avg).coerceAtLeast(0f)
-        val diffR = (rightEnergy - avg).coerceAtLeast(0f)
-
-        val scaledAvg = logScale(avg)
-        val scaledL = logScale(diffL)
-        val scaledR = logScale(diffR)
-
-        mainHandler.post {
-            txtAvg.text = "평균 음원: ${"%.3f".format(avg)}"
-            txtLeft.text = "좌 대표: Δ${"%.3f".format(diffL)}"
-            txtRight.text = "우 대표: Δ${"%.3f".format(diffR)}"
-
-            gaugeAvg.progress = (scaledAvg * 100).roundToInt()
-            gaugeLeft.progress = (scaledL * 100).roundToInt()
-            gaugeRight.progress = (scaledR * 100).roundToInt()
+    private fun startMic() {
+        try {
+            Toast.makeText(this, "🎤 스테레오 마이크 시작 중...", Toast.LENGTH_SHORT).show()
+            micManager.startStereo()
+        } catch (e: Exception) {
+            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e("WhisperMicHUD", "❌ startMic error", e)
         }
     }
 
-    private fun logScale(v: Float): Float {
-        if (v <= 0f) return 0f
-        return (ln(1 + v * 1000) / ln(1001.0)).toFloat().coerceIn(0f, 1f)
+    /** 🎚️ 각 파형별 에너지 계산 및 로그게이지 갱신 */
+    private fun updateWaveEnergy(buffer: ShortArray) {
+        if (buffer.isEmpty()) return
+        val read = buffer.size
+        var sumL = 0.0
+        var sumR = 0.0
+
+        // 좌우 평균 계산
+        val avgBuf = ShortArray(read / 2)
+        var j = 0
+        var i = 0
+        while (i < read - 1) {
+            val l = buffer[i].toInt()
+            val r = buffer[i + 1].toInt()
+            avgBuf[j] = ((l + r) / 2).toShort()
+            sumL += l * l
+            sumR += r * r
+            j++; i += 2
+        }
+
+        // 평균파형 RMS
+        val avgRms = sqrt(avgBuf.map { it * it }.average())
+        val leftRms = sqrt(sumL / (read / 2))
+        val rightRms = sqrt(sumR / (read / 2))
+
+        // 대표파형 = 각 - 평균
+        var sumLeftDiff = 0.0
+        var sumRightDiff = 0.0
+        for (k in avgBuf.indices) {
+            val l = buffer[k * 2].toInt()
+            val r = buffer[k * 2 + 1].toInt()
+            sumLeftDiff += (l - avgBuf[k]) * (l - avgBuf[k])
+            sumRightDiff += (r - avgBuf[k]) * (r - avgBuf[k])
+        }
+        val leftDiffRms = sqrt(sumLeftDiff / avgBuf.size)
+        val rightDiffRms = sqrt(sumRightDiff / avgBuf.size)
+
+        updateGauge("avg", avgRms)
+        updateGauge("left", leftDiffRms)
+        updateGauge("right", rightDiffRms)
     }
 
-    // 🔒 권한
+    private fun updateGauge(key: String, rms: Double) {
+        val rmsNorm = (rms / 32768.0).coerceIn(0.0, 1.0)
+        val scaled = (ln(1 + rmsNorm * 1000) / ln(1001.0)).toFloat()
+        val percent = (scaled * 100).roundToInt()
+
+        mainHandler.post {
+            gauges[key]?.apply {
+                bar.progress = percent
+                value.text = "RMS: ${"%.4f".format(rmsNorm)}"
+            }
+        }
+    }
+
     private fun ensureMicPermission() {
         val permission = Manifest.permission.RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(this, permission)
@@ -121,11 +157,11 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101 && grantResults.isNotEmpty()
-            && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (requestCode == 101 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "🎤 마이크 권한 허용됨", Toast.LENGTH_SHORT).show()
-            mainHandler.postDelayed({ micManager.startStereo() }, 500)
+            mainHandler.postDelayed({ startMic() }, 500)
+        } else {
+            Toast.makeText(this, "❌ 마이크 권한이 필요합니다", Toast.LENGTH_LONG).show()
         }
     }
 
