@@ -1,19 +1,17 @@
 package ai.willkim.wkwhisperkey.audio
 
 import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-
-import android.os.Build
-import android.widget.Toast
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Log
+import android.widget.Toast
 import kotlinx.coroutines.*
 import kotlin.math.sqrt
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
