@@ -1,88 +1,58 @@
 package ai.willkim.wkwhisperkey.whisper.api
 
-import ai.willkim.wkwhisperkey.whisper.WhisperEngineInterface
 import android.util.Log
-import java.io.*
-import java.net.HttpURLConnection
-import java.net.URL
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.sqrt
 
-/**
- * WhisperApiEngine
- * ----------------
- * OpenAI Whisper API 호출용 엔진.
- * - PCM을 WAV 파일로 저장 후 업로드
- */
-class WhisperApiEngine(private val apiKey: String) : WhisperEngineInterface {
+object WhisperApiEngine {
+    private var job: Job? = null
 
-    override fun transcribe(pcmBuffer: ByteBuffer): String? {
-        val tmpFile = File.createTempFile("whisper_", ".wav")
-        writeWav(tmpFile, pcmBuffer)
-        val result = callApi(tmpFile)
-        tmpFile.delete()
-        return result
-    }
-
-    private fun callApi(file: File): String? {
-        val url = URL("https://api.openai.com/v1/audio/transcriptions")
-        val boundary = "WhisperForm${System.currentTimeMillis()}"
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Authorization", "Bearer $apiKey")
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            doOutput = true
-        }
-
-        DataOutputStream(conn.outputStream).use { out ->
-            fun writeLine(s: String) = out.writeBytes("$s\r\n")
-
-            writeLine("--$boundary")
-            writeLine("Content-Disposition: form-data; name=\"model\"")
-            writeLine("")
-            writeLine("whisper-1")
-
-            writeLine("--$boundary")
-            writeLine("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"")
-            writeLine("Content-Type: audio/wav")
-            writeLine("")
-            file.inputStream().use { it.copyTo(out) }
-            writeLine("")
-            writeLine("--$boundary--")
-        }
-
-        return try {
-            conn.inputStream.bufferedReader().readText().also {
-                Log.i("WhisperAPI", "API result len=${it.length}")
-            }
-        } catch (e: Exception) {
-            Log.e("WhisperAPI", "error: ${e.message}")
-            conn.errorStream?.bufferedReader()?.readText()
+    /** 🎧 버퍼 대기열 초기화 */
+    fun startEngine() {
+        if (job?.isActive == true) return
+        job = CoroutineScope(Dispatchers.Default).launch {
+            Log.i("WhisperApi", "🧠 Whisper Engine started")
         }
     }
 
-    /** PCM → WAV 파일 변환 */
-    private fun writeWav(file: File, pcm: ByteBuffer) {
-        val out = DataOutputStream(FileOutputStream(file))
-        val pcmData = ByteArray(pcm.remaining())
-        pcm.get(pcmData)
-        val sampleRate = 16000
-        val byteRate = sampleRate * 2
-        val dataLen = pcmData.size + 36
-        // WAV 헤더
-        // 교체할 부분만 표시
-        out.writeBytes("RIFF")
-        out.writeInt(Integer.reverseBytes(dataLen))
-        out.writeBytes("WAVEfmt ")
-        out.writeInt(Integer.reverseBytes(16))
-        out.writeShort(1)    // AudioFormat: PCM
-        out.writeShort(1)    // Channels: mono
-        out.writeInt(Integer.reverseBytes(sampleRate))
-        out.writeInt(Integer.reverseBytes(byteRate))
-        out.writeShort(2)    // BlockAlign
-        out.writeShort(16)   // BitsPerSample
-        out.writeBytes("data")
-        out.writeInt(Integer.reverseBytes(pcmData.size))
-        out.write(pcmData)
-        out.close()
+    /** 🔄 마이크 PCM 입력 수신 (스테레오 → 모노 변환 포함) */
+    fun enqueueAudio(stereo: ShortArray, read: Int) {
+        if (read < 4) return
+
+        val mono = ShortArray(read / 2)
+        var i = 0
+        var j = 0
+        while (i < read - 1) {
+            val l = stereo[i].toInt()
+            val r = stereo[i + 1].toInt()
+            mono[j] = ((l + r) / 2).toShort() // ✅ 좌우평균
+            i += 2; j++
+        }
+
+        val energy = calculateEnergy(mono)
+        Log.d("WhisperApi", "🎙 Energy ${"%.3f".format(energy)}")
+
+        // Whisper 호출부 (실험 단계)
+        sendToWhisper(mono)
+    }
+
+    /** 📈 RMS 에너지 계산 */
+    private fun calculateEnergy(buffer: ShortArray): Float {
+        var sum = 0.0
+        for (s in buffer) sum += s * s
+        val rms = sqrt(sum / buffer.size)
+        return (rms / 32768.0).toFloat()
+    }
+
+    /** 🧩 Whisper 엔진 호출 자리 (추후 네이티브/HTTP 연동) */
+    private fun sendToWhisper(buffer: ShortArray) {
+        // TODO: whisper.cpp or local model hook
+    }
+
+    fun stop() {
+        job?.cancel()
+        Log.i("WhisperApi", "🧹 Whisper Engine stopped")
     }
 }
