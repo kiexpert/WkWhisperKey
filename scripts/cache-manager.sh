@@ -24,8 +24,7 @@ if [ "$TYPE" = "core" ]; then
     echo "📜 Copied SDK licenses from system SDK."
   fi
 
-  CACHE_PATHS="$SDK_ROOT/cmake
-$SDK_ROOT/ndk"
+  CACHE_PATHS="$SDK_ROOT"
 else
   CACHE_PATHS="$HOME/.gradle/caches
 android/app/build/intermediates
@@ -61,7 +60,7 @@ echo "restore_key=${LATEST_KEY}" >> "$GITHUB_OUTPUT"
 # ────────────────────────────────────────────────
 calc_hash() {
   local p="$1"
-  find $p -maxdepth 2 -type f -printf "%p %s\n" 2>/dev/null | sort | sha256sum | cut -d ' ' -f1
+  find $p -maxdepth 3 -type f -printf "%p %s\n" 2>/dev/null | sort | sha256sum | cut -d ' ' -f1
 }
 
 # ♻️ 4. 복원 모드
