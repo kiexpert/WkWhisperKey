@@ -1,5 +1,7 @@
 package ai.willkim.wkwhisperkey.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.os.*
 import android.util.Log
@@ -8,6 +10,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import kotlin.math.roundToInt
@@ -34,6 +38,9 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         layout.addView(gaugeLayout)
         setContentView(layout)
 
+        // ✅ 권한 확인 및 요청
+        ensureMicPermission()
+
         WkSafetyMonitor.initialize(this)
         micManager = WkMicArrayManager(
             this,
@@ -41,6 +48,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             onEnergyLevel = { id, level -> updateMicEnergy(id, level) }
         )
 
+        // 권한 허용 직후 약간의 지연 후 마이크 스캔
         mainHandler.postDelayed({ startMic() }, 600)
     }
 
@@ -96,5 +104,33 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         super.onDestroy()
         micManager.stopAll()
         WkSafetyMonitor.stop()
+    }
+
+    // ✅ 권한 체크 함수
+    private fun ensureMicPermission() {
+        val permission = Manifest.permission.RECORD_AUDIO
+        if (ContextCompat.checkSelfPermission(this, permission)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(permission), 101)
+        } else {
+            Log.i("Permission", "🎙️ Mic permission already granted")
+        }
+    }
+
+    // ✅ 권한 요청 결과 처리
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "🎤 마이크 권한 허용됨", Toast.LENGTH_SHORT).show()
+                mainHandler.postDelayed({ startMic() }, 500)
+            } else {
+                Toast.makeText(this, "❌ 마이크 권한이 필요합니다", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 }
