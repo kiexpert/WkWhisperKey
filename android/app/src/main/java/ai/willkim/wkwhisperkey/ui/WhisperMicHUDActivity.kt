@@ -139,7 +139,7 @@ class WhisperMicHUDActivity : Activity() {
             root.addView(gauge)
             gaugeMap[id] = gauge
         }
-        micManager.startAll()
+        micManager.startStereo()
     }
 
     private fun initComparePanel() {
