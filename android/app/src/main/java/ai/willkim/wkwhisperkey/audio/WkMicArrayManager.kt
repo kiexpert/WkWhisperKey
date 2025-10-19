@@ -108,7 +108,7 @@ class WkMicArrayManager(
     }
 
     fun getLastBuffer(id: Int = 0): ShortArray? {
-        return if (channel == 0) lastLeft else lastRight
+        return if (id == 0) lastLeft else lastRight
     }
 
     fun scanInputs(): List<AudioDeviceInfo> {
