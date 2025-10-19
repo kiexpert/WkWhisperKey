@@ -22,6 +22,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private lateinit var txtSummary: TextView
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // 게이지 구성요소
     private data class ChannelGauge(
         val label: TextView,
         val bar: ProgressBar,
@@ -33,13 +34,13 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 기본 UI
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
-
         txtSummary = TextView(this).apply {
-            text = "루트화자 로그 게이지 (평균 / 좌대표 / 우대표)"
+            text = "🎧 루트화자 로그 게이지 (평균 / 좌대표 / 우대표)"
             textSize = 18f
         }
         layout.addView(txtSummary)
@@ -68,7 +69,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 max = 100
                 progress = 0
             }
-            val valTxt = TextView(this).apply { text = "-∞ dB" }
+            val valTxt = TextView(this).apply { text = "0.0 dB SPL" }
             gaugeLayout.addView(name)
             gaugeLayout.addView(bar)
             gaugeLayout.addView(valTxt)
@@ -89,18 +90,17 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         }
     }
 
-    /** 🎚️ 각 파형별 에너지 계산 및 로그게이지 갱신 */
+    /** 🎚️ 각 파형별 RMS → dB SPL 변환 및 게이지 갱신 */
     private fun updateWaveEnergy(buffer: ShortArray) {
         if (buffer.isEmpty()) return
-        val read = buffer.size
+        val n = buffer.size
         var sumL = 0.0
         var sumR = 0.0
 
-        // 좌우 평균 계산
-        val avgBuf = ShortArray(read / 2)
+        val avgBuf = ShortArray(n / 2)
         var j = 0
         var i = 0
-        while (i < read - 1) {
+        while (i < n - 1) {
             val l = buffer[i].toInt()
             val r = buffer[i + 1].toInt()
             avgBuf[j] = ((l + r) / 2).toShort()
@@ -109,12 +109,11 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             j++; i += 2
         }
 
-        // 평균 RMS
         val avgRms = sqrt(avgBuf.map { it * it }.average())
-        val leftRms = sqrt(sumL / (read / 2))
-        val rightRms = sqrt(sumR / (read / 2))
+        val leftRms = sqrt(sumL / (n / 2))
+        val rightRms = sqrt(sumR / (n / 2))
 
-        // 대표파형 RMS
+        // 대표파형 (평균으로부터의 차)
         var sumLeftDiff = 0.0
         var sumRightDiff = 0.0
         for (k in avgBuf.indices) {
@@ -126,22 +125,23 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val leftDiffRms = sqrt(sumLeftDiff / avgBuf.size)
         val rightDiffRms = sqrt(sumRightDiff / avgBuf.size)
 
-        updateGauge("avg", avgRms)
-        updateGauge("left", leftDiffRms)
-        updateGauge("right", rightDiffRms)
+        updateGaugeAsSPL("avg", avgRms)
+        updateGaugeAsSPL("left", leftDiffRms)
+        updateGaugeAsSPL("right", rightDiffRms)
     }
 
-    private fun updateGauge(key: String, rms: Double) {
-        val norm = (rms / 32768.0).coerceIn(1e-6, 1.0)
-        val db = 20 * log10(norm)
-        // 로그 스케일 게이지 (0dB = 최대, -80dB = 하한)
-        val scaled = ((db + 80f) / 80f).coerceIn(0.0, 1.0)
-        val percent = (scaled * 100).roundToInt()
+    /** 🎚️ RMS → dB SPL 변환 (120 dB SPL 상한 정규화) */
+    private fun updateGaugeAsSPL(key: String, rms: Double) {
+        val norm = (rms / 32768.0).coerceIn(1e-9, 1.0)
+
+        // 절대 dB SPL 계산: 120 dB SPL ≈ 32767일 때
+        val spl = 20 * log10(norm) + 120.0
+        val percent = (spl.coerceIn(0.0, 120.0) / 120.0 * 100).roundToInt()
 
         mainHandler.post {
             gauges[key]?.apply {
                 bar.progress = percent
-                value.text = String.format("%.1f dB", db)
+                value.text = String.format("%.1f dB SPL", spl)
             }
         }
     }
