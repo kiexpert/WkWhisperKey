@@ -52,13 +52,25 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         mainHandler.postDelayed({ startMic() }, 600)
     }
 
-    private fun startMic() {
+    private fun xstartMic() {
         try {
             Toast.makeText(this, "🎤 마이크 스캔 중...", Toast.LENGTH_SHORT).show()
             val inputs = micManager.scanInputs()
             gaugeLayout.removeAllViews()
             for (d in inputs) addMicGauge(d)
             micManager.startStereo()
+        } catch (e: Exception) {
+            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startMic() {
+        try {
+            Toast.makeText(this, "🎤 마이크 순차 스캔 시작...", Toast.LENGTH_SHORT).show()
+            val inputs = micManager.scanInputs()
+            gaugeLayout.removeAllViews()
+            for (d in inputs) addMicGauge(d)
+            micManager.startSequential(inputs)   // ✅ 수정된 부분
         } catch (e: Exception) {
             Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
         }
