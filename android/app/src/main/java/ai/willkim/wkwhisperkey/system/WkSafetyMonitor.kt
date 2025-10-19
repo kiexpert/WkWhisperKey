@@ -6,6 +6,7 @@ import android.util.Log
 import android.widget.Toast
 import kotlinx.coroutines.*
 import java.lang.Thread.UncaughtExceptionHandler
+import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 
 /**
  * WkSafetyMonitor
