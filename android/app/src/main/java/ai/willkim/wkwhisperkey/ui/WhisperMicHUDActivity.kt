@@ -68,7 +68,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 max = 100
                 progress = 0
             }
-            val valTxt = TextView(this).apply { text = "RMS: 0.000" }
+            val valTxt = TextView(this).apply { text = "-∞ dB" }
             gaugeLayout.addView(name)
             gaugeLayout.addView(bar)
             gaugeLayout.addView(valTxt)
@@ -109,12 +109,12 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             j++; i += 2
         }
 
-        // 평균파형 RMS
+        // 평균 RMS
         val avgRms = sqrt(avgBuf.map { it * it }.average())
         val leftRms = sqrt(sumL / (read / 2))
         val rightRms = sqrt(sumR / (read / 2))
 
-        // 대표파형 = 각 - 평균
+        // 대표파형 RMS
         var sumLeftDiff = 0.0
         var sumRightDiff = 0.0
         for (k in avgBuf.indices) {
@@ -132,14 +132,16 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     }
 
     private fun updateGauge(key: String, rms: Double) {
-        val rmsNorm = (rms / 32768.0).coerceIn(0.0, 1.0)
-        val scaled = (ln(1 + rmsNorm * 1000) / ln(1001.0)).toFloat()
+        val norm = (rms / 32768.0).coerceIn(1e-6, 1.0)
+        val db = 20 * log10(norm)
+        // 로그 스케일 게이지 (0dB = 최대, -80dB = 하한)
+        val scaled = ((db + 80f) / 80f).coerceIn(0.0, 1.0)
         val percent = (scaled * 100).roundToInt()
 
         mainHandler.post {
             gauges[key]?.apply {
                 bar.progress = percent
-                value.text = "RMS: ${"%.4f".format(rmsNorm)}"
+                value.text = String.format("%.1f dB", db)
             }
         }
     }
