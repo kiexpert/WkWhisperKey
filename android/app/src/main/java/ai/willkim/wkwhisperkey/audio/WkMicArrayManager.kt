@@ -107,8 +107,8 @@ class WkMicArrayManager(
         Log.i("MicArray", "Stereo mic stopped.")
     }
 
-    fun getLastBuffer(id: Int? = null): ShortArray? {
-        return lastBuffer
+    fun getLastBuffer(id: Int = 0): ShortArray? {
+        return if (channel == 0) lastLeft else lastRight
     }
 
     fun scanInputs(): List<AudioDeviceInfo> {
