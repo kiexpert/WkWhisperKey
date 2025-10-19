@@ -13,6 +13,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
+import ai.willkim.wkwhisperkey.ui.WkLiveGraphView
 import kotlin.math.*
 
 class WhisperMicHUDActivity : AppCompatActivity() {
@@ -131,40 +132,47 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         fun energyMinusNoise(e: Double, nf: Double): Double = max(e - nf, 0.0)
 
-        // UI 업데이트
         main.post {
+            var avgL = 0.0
+            var avgR = 0.0
+        
             for (k in bands.indices) {
                 val row = rows[k]
                 val (lMag, lPhase) = resL[k]
                 val (rMag, rPhase) = resR[k]
                 val (aMag, _) = resA[k]
-
+        
                 val lCorr = energyMinusNoise(lMag, noiseFloor[k])
                 val rCorr = energyMinusNoise(rMag, noiseFloor[k])
                 val aCorr = energyMinusNoise(aMag, noiseFloor[k])
-
+        
                 val lDb = toDbSpl(lCorr)
                 val rDb = toDbSpl(rCorr)
                 val aDb = toDbSpl(aCorr)
-
-                // 위상차 계산 및 시프트
+        
+                avgL += lDb
+                avgR += rDb
+        
                 var dPhi = rPhase - lPhase
                 if (dPhi > 180) dPhi -= 360.0
                 if (dPhi < -180) dPhi += 360.0
                 val offsetPx = (dPhi / 180.0 * 30.0).toFloat()
-
-                // 시각 안정화
+        
                 row.label.translationX = offsetPx
                 row.values.translationX = offsetPx
                 row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
                 row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
-
-                // 자리 정렬된 문자열 포맷
+        
                 row.values.text = String.format(
                     "AVG %6.1f dB | L %6.1f dB, φ %+04.0f° | R %6.1f dB, φ %+04.0f° | Δφ %+04.0f°",
                     aDb, lDb, lPhase, rDb, rPhase, dPhi
                 )
             }
+        
+            // 좌우 평균을 그래프에 전달
+            avgL /= bands.size
+            avgR /= bands.size
+            ui.graph.onFrame(avgL, avgR)
         }
     }
 
@@ -231,6 +239,12 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val center = TextView(act).apply {
             textSize = 14f
             gravity = Gravity.CENTER_HORIZONTAL
+        }.also { root.addView(it) }
+        val graph = WkLiveGraphView(act).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                240
+            )
         }.also { root.addView(it) }
 
         fun addBandRow(text: String): Row {
