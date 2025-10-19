@@ -1,134 +1,52 @@
 package ai.willkim.wkwhisperkey.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.media.AudioDeviceInfo
-import android.os.*
-import android.util.Log
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
-import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
-import kotlin.math.roundToInt
+import ai.willkim.wkwhisperkey.whisper.native.WkSafetyBridge
 
-class WhisperMicHUDActivity : AppCompatActivity() {
+class WhisperHUDActivity : ComponentActivity() {
 
-    private lateinit var micManager: WkMicArrayManager
-    private val micGauges = mutableMapOf<Int, ProgressBar>()
-    private lateinit var gaugeLayout: LinearLayout
-    private lateinit var txtEnergy: TextView
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val viewModel: WhisperVisualizerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // ---------- 기본 UI ----------
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 16, 16, 16)
-        }
-        txtEnergy = TextView(this).apply {
-            text = "통합 채널 에너지: 0%"
-            textSize = 18f
-        }
-        layout.addView(txtEnergy)
-        gaugeLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        layout.addView(gaugeLayout)
-        setContentView(layout)
-        // ----------------------------
-
-        ensureMicPermission()
-
-        WkSafetyMonitor.initialize(this)
-        micManager = WkMicArrayManager(
-            this,
-            onBuffer = { _, _ -> WkSafetyMonitor.heartbeat() },
-            onEnergyLevel = { id, level -> updateMicEnergy(id, level) }
-        )
-
-        mainHandler.postDelayed({ startMic() }, 800)
-    }
-
-    // ---------- 마이크 시작 ----------
-    private fun startMic() {
         try {
-            Toast.makeText(this, "🎤 스테레오 마이크 시작 중...", Toast.LENGTH_SHORT).show()
-
-            gaugeLayout.removeAllViews()
-            val fakeDevice = AudioDeviceInfo.Builder().setId(0).build()
-            addMicGauge(fakeDevice)
-
-            micManager.startStereo()
-
-        } catch (e: Exception) {
-            Toast.makeText(this, "마이크 시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
-            Log.e("WhisperMicHUD", "❌ startMic error", e)
+            WkSafetyMonitor.initialize(this)
+            WkSafetyBridge.registerContext(this)
+        } catch (e: UnsatisfiedLinkError) {
+            e.printStackTrace()
         }
-    }
 
-    // ---------- 게이지 추가 ----------
-    private fun addMicGauge(dev: AudioDeviceInfo) {
-        val id = dev.id
-        val txt = TextView(this).apply {
-            text = "🎙️ 스테레오 마이크 (id=$id)"
-            textSize = 16f
-        }
-        val gauge = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-        }
-        gaugeLayout.addView(txt)
-        gaugeLayout.addView(gauge)
-        micGauges[id] = gauge
-    }
+        setContent {
+            MaterialTheme {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // ✅ 2. 로그 및 마이크 상태 오버레이
+                    LogVisualizerOverlay(
+                        context = this@WhisperHUDActivity,
+                        viewModel = viewModel,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x66000000)) // 반투명 블랙 오버레이
+                    )
 
-    // ---------- 에너지 업데이트 ----------
-    private fun updateMicEnergy(id: Int, level: Float) {
-        val percent = (level * 100).roundToInt().coerceIn(0, 100)
-        mainHandler.post {
-            txtEnergy.text = "통합 채널 에너지: ${percent}%"
-            micGauges[id]?.progress = percent
-        }
-    }
-
-    // ---------- 권한 확인 ----------
-    private fun ensureMicPermission() {
-        val permission = Manifest.permission.RECORD_AUDIO
-        if (ContextCompat.checkSelfPermission(this, permission)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(this, arrayOf(permission), 101)
-        } else {
-            Log.i("Permission", "🎙️ Mic permission already granted")
-        }
-    }
-
-    // ---------- 권한 요청 결과 ----------
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "🎤 마이크 권한 허용됨", Toast.LENGTH_SHORT).show()
-                mainHandler.postDelayed({ startMic() }, 500)
-            } else {
-                Toast.makeText(this, "❌ 마이크 권한이 필요합니다", Toast.LENGTH_LONG).show()
+                    // ✅ 1. Whisper 비주얼라이저 (배경)
+                    WhisperVisualizer(viewModel)
+                }
             }
         }
-    }
-
-    // ---------- 생명주기 ----------
-    override fun onDestroy() {
-        super.onDestroy()
-        micManager.stopAll()
-        WkSafetyMonitor.stop()
     }
 }
