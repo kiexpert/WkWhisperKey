@@ -13,7 +13,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
-import ai.willkim.wkwhisperkey.ui.WkLiveGraphView
+import ai.willkim.wkwhisperkey.ui.WkPhaseScatterView
 import kotlin.math.*
 
 class WhisperMicHUDActivity : AppCompatActivity() {
@@ -132,47 +132,54 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         fun energyMinusNoise(e: Double, nf: Double): Double = max(e - nf, 0.0)
 
+        // UI 업데이트
         main.post {
             var avgL = 0.0
             var avgR = 0.0
-        
+            val phaseArr = DoubleArray(bands.size)
+            val magArr = DoubleArray(bands.size)
+
             for (k in bands.indices) {
                 val row = rows[k]
                 val (lMag, lPhase) = resL[k]
                 val (rMag, rPhase) = resR[k]
                 val (aMag, _) = resA[k]
-        
+
                 val lCorr = energyMinusNoise(lMag, noiseFloor[k])
                 val rCorr = energyMinusNoise(rMag, noiseFloor[k])
                 val aCorr = energyMinusNoise(aMag, noiseFloor[k])
-        
+
                 val lDb = toDbSpl(lCorr)
                 val rDb = toDbSpl(rCorr)
                 val aDb = toDbSpl(aCorr)
-        
+
                 avgL += lDb
                 avgR += rDb
-        
+
                 var dPhi = rPhase - lPhase
                 if (dPhi > 180) dPhi -= 360.0
                 if (dPhi < -180) dPhi += 360.0
+                phaseArr[k] = dPhi
+                magArr[k] = aDb
+
                 val offsetPx = (dPhi / 180.0 * 30.0).toFloat()
-        
+
                 row.label.translationX = offsetPx
                 row.values.translationX = offsetPx
                 row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
                 row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
-        
+
                 row.values.text = String.format(
                     "AVG %6.1f dB | L %6.1f dB, φ %+04.0f° | R %6.1f dB, φ %+04.0f° | Δφ %+04.0f°",
                     aDb, lDb, lPhase, rDb, rPhase, dPhi
                 )
             }
-        
-            // 좌우 평균을 그래프에 전달
+
             avgL /= bands.size
             avgR /= bands.size
-            ui.graph.onFrame(avgL, avgR)
+
+            // --- 주파수별 위상 스펙트럼 점 그래프 ---
+            ui.phaseGraph.onFrame(phaseArr, magArr)
         }
     }
 
@@ -206,9 +213,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         return 20.0 * log10(norm) + 120.0
     }
 
-    private fun fmtDb(v: Double) = String.format("%6.1f dB", v)
-    private fun fmtDeg(v: Double) = String.format("%+04.0f", v)
-
     private fun ensureMicPermission() {
         val p = Manifest.permission.RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED)
@@ -233,17 +237,16 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
-        val title = TextView(act).apply {
-            textSize = 18f
-        }.also { root.addView(it) }
+        val title = TextView(act).apply { textSize = 18f }.also { root.addView(it) }
         val center = TextView(act).apply {
             textSize = 14f
             gravity = Gravity.CENTER_HORIZONTAL
         }.also { root.addView(it) }
-        val graph = WkLiveGraphView(act).apply {
+
+        val phaseGraph = WkPhaseScatterView(act).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                240
+                320
             )
         }.also { root.addView(it) }
 
