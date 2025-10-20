@@ -323,7 +323,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             root.addView(line)
 
             val valueText = TextView(act).apply {
-                text =
+              this.text =
                     "AVG 0.0 | L 0.0 φ +000 | R 0.0 φ +000 | Δφ +000°"
                 textAlignment = TextView.TEXT_ALIGNMENT_CENTER
                 gravity = Gravity.CENTER_HORIZONTAL
