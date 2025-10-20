@@ -131,6 +131,8 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
             ui.logText.text = sb.toString()
             ui.logScroll.post { ui.logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+
+            ui.mapView.updateSpeakers(speakers)
         }
     }
 
@@ -180,6 +182,12 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val logScroll: ScrollView
         val logText: TextView
 
+        val mapView = WkSpeakerMapView(act).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 400
+            )
+        }
+
         init {
             logText = TextView(context).apply {
                 textSize = 12f
@@ -199,6 +207,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                     1f
                 )
             )
+            root.addView(mapView)
         }
     }
 }
