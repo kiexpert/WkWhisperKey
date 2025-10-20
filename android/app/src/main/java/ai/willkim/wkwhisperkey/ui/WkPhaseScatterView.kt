@@ -15,7 +15,7 @@ class WkPhaseScatterView @JvmOverloads constructor(
     private val phases = Array(maxFrames) { FloatArray(bands) }
     private val amps = Array(maxFrames) { FloatArray(bands) }
     private var frameIndex = 0
-    private var filled = false
+    private var filled = true // false
 
     // 빨주노초파남보 + 검(성대)
     private val colors = intArrayOf(
