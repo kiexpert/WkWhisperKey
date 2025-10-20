@@ -16,81 +16,43 @@ import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import kotlin.math.roundToInt
 
 /**
- * WhisperMicHUDActivity (auto-adaptive version)
- * 분리기(WkVoiceSeparator)의 인자/콜백 시그니처를 자동 탐색하여
- * 어떤 버전의 separator라도 컴파일 및 실행 가능.
+ * WhisperMicHUDActivity
+ * 화자 분리기(WkVoiceSeparator) 기반 실시간 HUD
+ * - micManager → L/R PCM 추출
+ * - separator.separate(L, R) 호출로 화자별 신호 계산
  */
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private lateinit var separator: Any
-    private lateinit var tokenizer: Any
+    private lateinit var separator: WkVoiceSeparator
 
     private val ui by lazy { Ui(this) }
     private val main = Handler(Looper.getMainLooper())
+
+    // 오디오 처리용 버퍼
+    private val ring = ShortArray(8192)
+    private var rp = 0
+    private var filled = 0
+
+    private val sampleRate = 44100
+    private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
+    private val N = 1024
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(ui.root)
 
         ui.title.text = "🎤 화자 분리 실시간 HUD"
-        ui.center.text = "자동 버전 호환 모드"
+        ui.center.text = "Phase-Delay Separation Engine"
 
         ensureMicPermission()
         WkSafetyMonitor.initialize(this)
 
-        // --- separator 초기화 (인자 순서 자동 탐색) ---
-        separator = try {
-            // 대부분의 최신 버전 시그니처
-            WkVoiceSeparator(doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0), 44100)
-        } catch (_: Throwable) {
-            try {
-                // 혹시 인자 순서가 반대일 때
-                WkVoiceSeparator(44100, doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0))
-            } catch (e: Throwable) {
-                e.printStackTrace()
-                throw e
-            }
-        }
+        separator = WkVoiceSeparator(sampleRate, bands)
 
-        // --- tokenizer 생성 ---
-        tokenizer = try {
-            WkVoiceTokenizer()
-        } catch (_: Throwable) {
-            // fallback (없어도 빌드 가능)
-            object { fun generateTokensFromSpeakers(speakers: List<Any>) = "tokenizer missing" }
-        }
-
-        // --- 콜백 연결 (onSpeakersUpdate / onSpeakerSignals / report 중 자동 감지) ---
-        try {
-            val cbProp = separator::class.members.find {
-                it.name in listOf("onSpeakersUpdate", "onSpeakerSignals", "report")
-            }
-            cbProp?.let {
-                val callback: (List<Any>) -> Unit = { list ->
-                    main.post { updateSpeakersUI(list) }
-                }
-                when (it.parameters.size) {
-                    2 -> it.call(separator, callback)
-                }
-            }
-        } catch (_: Throwable) { }
-
-        // --- micManager 연결 ---
         micManager = WkMicArrayManager(
             this,
-            onBuffer = { _, buf ->
-                try {
-                    val fn = separator::class.members.find {
-                        it.name in listOf("feed", "processFrame", "process", "input")
-                    }
-                    fn?.call(separator, buf)
-                } catch (e: Exception) {
-                    runOnUiThread {
-                        Toast.makeText(this, "분리기 오류: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
+            onBuffer = { _, buf -> onStereoPcm(buf) },
             onEnergyLevel = { _, _ -> }
         )
 
@@ -106,37 +68,53 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         }
     }
 
-    /** 화자 정보 UI 업데이트 */
-    private fun updateSpeakersUI(speakers: List<Any>) {
+    /** 스테레오 PCM 수신 */
+    private fun onStereoPcm(stereo: ShortArray) {
+        for (v in stereo) {
+            ring[rp] = v
+            rp = (rp + 1) % ring.size
+        }
+        filled = (filled + stereo.size).coerceAtMost(ring.size)
+        if (filled >= N * 4 && (filled % (N * 2) == 0)) {
+            processFrame()
+        }
+    }
+
+    /** 프레임 처리 → 화자 분리기 호출 */
+    private fun processFrame() {
+        val L = DoubleArray(N)
+        val R = DoubleArray(N)
+        var idx = (rp - 2 * N + ring.size) % ring.size
+        var i = 0
+        while (i < 2 * N) {
+            val l = ring[idx].toInt(); idx = (idx + 1) % ring.size
+            val r = ring[idx].toInt(); idx = (idx + 1) % ring.size
+            L[i / 2] = l.toDouble()
+            R[i / 2] = r.toDouble()
+            i += 2
+        }
+
+        val speakers = separator.separate(L, R)
+        main.post { updateSpeakersUI(speakers) }
+    }
+
+    /** UI 출력 */
+    private fun updateSpeakersUI(speakers: List<SpeakerSignal>) {
         ui.clearSpeakers()
         if (speakers.isEmpty()) {
             ui.status.text = "👂 감지된 화자 없음"
             return
         }
+
         ui.status.text = "감지된 화자 수: ${speakers.size}"
-
-        for ((i, s) in speakers.withIndex()) {
-            val row = ui.addSpeakerRow("화자 #${i + 1}")
-
-            val k = s::class
-            val lDb = (k.members.find { it.name == "energyL" }?.call(s) as? Double) ?: 0.0
-            val rDb = (k.members.find { it.name == "energyR" }?.call(s) as? Double) ?: 0.0
-            val avgDb = (lDb + rDb) / 2.0
-            val dPhi = (k.members.find { it.name == "deltaPhase" }?.call(s) as? Double) ?: 0.0
-            val dist = (k.members.find { it.name == "distance" }?.call(s) as? Double) ?: 0.0
-
-            val tokenStr = try {
-                val genFn = tokenizer::class.members.find { it.name == "generateTokensFromSpeakers" }
-                genFn?.call(tokenizer, listOf(s)) as? String ?: ""
-            } catch (_: Throwable) {
-                ""
-            }
-
+        for ((i, spk) in speakers.withIndex()) {
+            val row = ui.addSpeakerRow("화자 #${i + 1} Δ=${spk.deltaIndex}")
+            val avgDb = spk.energy
+            val lDb = avgDb - 3
+            val rDb = avgDb - 3
             row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
             row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
-            row.values.text = String.format("AVG %6.1f dB | L %6.1f | R %6.1f | Δφ=%+05.1f° | dist≈%.2fm",
-                avgDb, lDb, rDb, dPhi, dist)
-            row.tokens.text = tokenStr
+            row.values.text = String.format("E=%6.1f dB | Δ=%d", spk.energy, spk.deltaIndex)
         }
     }
 
@@ -159,7 +137,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         WkSafetyMonitor.stop()
     }
 
-    // ------------------- UI 내부 -------------------
+    // ---------- UI ----------
     private class Ui(private val act: AppCompatActivity) {
         val root = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
@@ -181,7 +159,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             for (r in speakerViews) {
                 root.removeView(r.label)
                 root.removeView(r.line)
-                root.removeView(r.tokens)
             }
             speakerViews.clear()
         }
@@ -189,7 +166,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         fun addSpeakerRow(title: String): Row {
             val label = TextView(act).apply { this.text = title; textSize = 15f }
             root.addView(label)
-
             val line = LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL
                 weightSum = 2f
@@ -209,15 +185,9 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 textAlignment = TextView.TEXT_ALIGNMENT_CENTER
                 gravity = Gravity.CENTER_HORIZONTAL
             }
-            val tokens = TextView(act).apply {
-                textAlignment = TextView.TEXT_ALIGNMENT_CENTER
-                gravity = Gravity.CENTER_HORIZONTAL
-                setSingleLine(true)
-            }
             root.addView(values)
-            root.addView(tokens)
 
-            val row = Row(label, line, left, right, values, tokens)
+            val row = Row(label, line, left, right, values)
             speakerViews += row
             return row
         }
@@ -227,8 +197,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             val line: LinearLayout,
             val leftBar: ProgressBar,
             val rightBar: ProgressBar,
-            val values: TextView,
-            val tokens: TextView
+            val values: TextView
         )
     }
 }
