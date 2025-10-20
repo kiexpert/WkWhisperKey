@@ -1,6 +1,7 @@
 package ai.willkim.wkwhisperkey.audio
 
 import kotlin.math.*
+import ai.willkim.wkwhisperkey.audio.SpeakerSignal as SpeakerInfo
 
 /**
  * WkVoiceTokenizer – 분리 음원에서 주파수별 16bit 토큰 생성
