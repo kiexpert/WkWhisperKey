@@ -182,7 +182,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val logScroll: ScrollView
         val logText: TextView
 
-        val mapView = WkSpeakerMapView(act).apply {
+        val mapView = WkSpeakerMapView(this@WhisperMicHUDActivity).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 400
             )
