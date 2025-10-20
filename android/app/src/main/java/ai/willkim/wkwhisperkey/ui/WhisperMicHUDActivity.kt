@@ -160,7 +160,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 if (dPhi > 180) dPhi -= 360.0
                 if (dPhi < -180) dPhi += 360.0
 
-                val offsetPx = (dPhi / 180.0 * 30.0).toFloat()
+                val offsetPx = 0 //(dPhi / 180.0 * 30.0).toFloat()
 
                 row.label.translationX = offsetPx
                 row.values.translationX = offsetPx
