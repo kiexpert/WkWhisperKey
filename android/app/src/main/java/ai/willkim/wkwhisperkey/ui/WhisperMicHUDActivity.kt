@@ -89,17 +89,46 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         updateUi(speakers)
     }
 
+    private fun rmsEnergy(samples: DoubleArray): Double {
+        if (samples.isEmpty()) return 0.0
+        var sum = 0.0
+        for (x in samples) sum += x * x
+        val rms = sqrt(sum / samples.size)
+        return 20.0 * log10(rms / 32768.0 + 1e-9) + 120.0
+    }
+
     private fun updateUi(speakers: List<SpeakerSignal>) {
         main.post {
-            val displaySpeakers = speakers.sortedByDescending { it.energy }.take(7)
+            val updated = speakers.map { s ->
+                val newE = rmsEnergy(s.samples)
+                s.copy(energy = newE)
+            }
+            val displaySpeakers = updated.sortedByDescending { it.energy }.take(7)
+
             val sb = StringBuilder()
             sb.append("감지된 화자 수: ${displaySpeakers.size}\n\n")
+
+            ui.gaugeContainer.removeAllViews()
+
             displaySpeakers.forEachIndexed { i, spk ->
-                sb.append(String.format(
-                    "#%-2d  E=%6.1f dB | Δ=%+4d | samples=%d\n",
-                    i + 1, spk.energy, spk.deltaIndex, spk.samples.size
-                ))
+                sb.append(
+                    String.format(
+                        "#%-2d  E=%6.1f dB | Δ=%+4d | samples=%d\n",
+                        i + 1, spk.energy, spk.deltaIndex, spk.samples.size
+                    )
+                )
+
+                val bar = ProgressBar(ui.context, null, android.R.attr.progressBarStyleHorizontal)
+                bar.max = 100
+                val level = ((spk.energy / 120.0) * 100).roundToInt().coerceIn(0, 100)
+                bar.progress = level
+                bar.progressDrawable.setTint(
+                    if (spk.deltaIndex >= 0) Color.rgb(255, 100, 100)
+                    else Color.rgb(100, 100, 255)
+                )
+                ui.gaugeContainer.addView(bar)
             }
+
             ui.logText.text = sb.toString()
             ui.logScroll.post { ui.logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
         }
@@ -124,42 +153,52 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         WkSafetyMonitor.stop()
     }
 
-    private class Ui(act: AppCompatActivity) {
-        val root = LinearLayout(act).apply {
+    private class Ui(val context: AppCompatActivity) {
+        val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
 
-        val title = TextView(act).apply {
+        val title = TextView(context).apply {
             textSize = 18f
             gravity = Gravity.START
         }.also { root.addView(it) }
 
-        val center = TextView(act).apply {
+        val center = TextView(context).apply {
             textSize = 14f
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, 8, 0, 16)
         }.also { root.addView(it) }
 
-        // 스크롤 가능한 로그 영역
+        // 게이지 컨테이너
+        val gaugeContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 8, 0, 16)
+        }.also { root.addView(it) }
+
+        // 스크롤 가능한 로그
         val logScroll: ScrollView
         val logText: TextView
 
         init {
-            logText = TextView(act).apply {
+            logText = TextView(context).apply {
                 textSize = 12f
                 gravity = Gravity.START
                 setTextColor(Color.DKGRAY)
                 setPadding(4, 12, 4, 4)
             }
-            logScroll = ScrollView(act).apply {
+            logScroll = ScrollView(context).apply {
                 isFillViewport = true
                 addView(logText)
             }
-            root.addView(logScroll, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0, 1f
-            ))
+            root.addView(
+                logScroll,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            )
         }
     }
 }
