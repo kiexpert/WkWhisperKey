@@ -1,5 +1,7 @@
 package ai.willkim.wkwhisperkey.audio
 
+import kotlin.math.roundToInt
+
 /**
  * WkVoiceTokenizer
  * 화자별 FFT 기반 음 토큰 생성기
