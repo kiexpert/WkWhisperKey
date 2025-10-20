@@ -11,20 +11,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import ai.willkim.wkwhisperkey.audio.*
+import ai.willkim.wkwhisperkey.audio.WkMicArrayManager
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
+import ai.willkim.wkwhisperkey.ui.WkPhaseScatterView
 import kotlin.math.*
-
-/**
- * WhisperMicHUDActivity
- * 화자 분리 + 실시간 위상 시각화 + 토큰 뷰어 통합
- * (C) 2025 Will Kim
- */
 
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private lateinit var separator: WkVoiceSeparator
     private val ui by lazy { Ui(this) }
     private val main = Handler(Looper.getMainLooper())
 
@@ -34,14 +28,21 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private val N = (sampleRate * frameMs / 1000.0).roundToInt()
     private val hop = N / 2
     private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
+
     private val ring = ShortArray(4 * N)
     private var rp = 0
     private var filled = 0
     private val win = DoubleArray(N) { i -> 0.5 - 0.5 * cos(2.0 * Math.PI * i / (N - 1)) }
 
     private lateinit var noiseFloor: DoubleArray
-    private val tokenizer = WkVoiceTokenizer()
-    private val rows = mutableListOf<Row>()
+
+    // --- 토큰 안정화 ---
+    private var lastTokenL = 0
+    private var lastTokenR = 0
+    private var stableCountL = 0
+    private var stableCountR = 0
+    private var confirmedTokenL = 0
+    private var confirmedTokenR = 0
 
     private data class Row(
         val label: TextView,
@@ -49,22 +50,23 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         val rightBar: ProgressBar,
         val values: TextView
     )
+    private val rows = mutableListOf<Row>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(ui.root)
 
-        ui.title.text = "화자 분리 + 위상 스펙트럼 + 토큰 뷰어"
+        ui.title.text = "8밴드 위상 시프트 게이지"
         ui.center.text = "← 화자 왼쪽 | 중앙 | 화자 오른쪽 →"
 
-        for (i in bands.indices)
+        for (i in bands.indices) {
             rows += ui.addBandRow("f${i} = ${bands[i].toInt()} Hz")
+        }
 
         ensureMicPermission()
         WkSafetyMonitor.initialize(this)
         noiseFloor = DoubleArray(bands.size) { 1e-9 }
 
-        separator = WkVoiceSeparator(sampleRate, bands)
         micManager = WkMicArrayManager(
             this,
             onBuffer = { _, buf -> onPcm(buf) },
@@ -89,9 +91,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             rp = (rp + 1) % ring.size
         }
         filled = (filled + stereo.size).coerceAtMost(ring.size)
-        if (filled >= 2 * N && (filled % (2 * hop) == 0)) {
-            processFrame()
-        }
+        if (filled >= 2 * N && (filled % (2 * hop) == 0)) processFrame()
     }
 
     private fun processFrame() {
@@ -109,34 +109,139 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             j += 2
         }
 
-        // 윈도우 적용
+        val AVG = DoubleArray(N)
+        val repL = DoubleArray(N)
+        val repR = DoubleArray(N)
+        for (i in 0 until N) {
+            val avg = (L[i] + R[i]) * 0.5
+            AVG[i] = avg
+            repL[i] = L[i] //- avg
+            repR[i] = R[i] //- avg
+        }
+
         for (i in 0 until N) {
             val w = win[i]
-            L[i] *= w
-            R[i] *= w
+            repL[i] *= w
+            repR[i] *= w
+            AVG[i] *= w
         }
 
-        val speakers = try {
-            separator.separate(L, R)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
-        }
+        val resL = analyzeBands(repL)
+        val resR = analyzeBands(repR)
+        val resA = analyzeBands(AVG)
+
+        val alphaNoise = 0.01
+        val energiesRoot = resA.map { it.first }.toDoubleArray()
+        for (k in bands.indices)
+            noiseFloor[k] = (1 - alphaNoise) * noiseFloor[k] + alphaNoise * energiesRoot[k]
+
+        fun energyMinusNoise(e: Double, nf: Double): Double = max(e - nf, 0.0)
 
         main.post {
-            // --- 시각화 / 노이즈 처리 ---
-            val avgL = L.map { abs(it) }.average()
-            val avgR = R.map { abs(it) }.average()
-            val avgA = (avgL + avgR) / 2.0
-            val phaseArr = DoubleArray(bands.size) { 0.0 }
-            val magArr = DoubleArray(bands.size) { avgA }
+            val phaseL = DoubleArray(bands.size)
+            val phaseR = DoubleArray(bands.size)
+            val amp = DoubleArray(bands.size)
 
-            ui.phaseGraph.onFrame(phaseArr, magArr)
+            for (k in bands.indices) {
+                val row = rows[k]
+                val (lMag, lPhase) = resL[k]
+                val (rMag, rPhase) = resR[k]
+                val (aMag, _) = resA[k]
 
-            // --- 토큰 생성 ---
-            val tokens = tokenizer.generateTokensFromSpeakers(speakers)
-            ui.tokenText.text = tokens.joinToString(" ")
+                val lCorr = energyMinusNoise(lMag, noiseFloor[k])
+                val rCorr = energyMinusNoise(rMag, noiseFloor[k])
+                val aCorr = energyMinusNoise(aMag, noiseFloor[k])
+
+                val lDb = toDbSpl(lCorr)
+                val rDb = toDbSpl(rCorr)
+                val aDb = toDbSpl(aCorr)
+
+                var dPhi = rPhase - lPhase
+                if (dPhi > 180) dPhi -= 360.0
+                if (dPhi < -180) dPhi += 360.0
+
+                val offsetPx = 0f //(dPhi / 180.0 * 30.0).toFloat()
+
+                row.label.translationX = offsetPx
+                row.values.translationX = offsetPx
+                row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
+                row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
+                row.values.text = String.format(
+                    "AVG %6.1f | L %6.1f φ %+04.0f | R %6.1f φ %+04.0f | Δφ %+04.0f°",
+                    aDb, lDb, lPhase, rDb, rPhase, dPhi
+                )
+
+                phaseL[k] = lPhase
+                phaseR[k] = rPhase
+                amp[k] = aDb
+            }
+
+            ui.phaseGraph.onFrame(phaseL, amp)
+            ui.phaseGraph.onFrame(phaseR, amp)
+
+            val tokenL = makeToken(resL)
+            val tokenR = makeToken(resR)
+            onTokenStable('L', tokenL)
+            onTokenStable('R', tokenR)
         }
+    }
+
+    private fun onTokenStable(side: Char, token: Int) {
+        if (side == 'L') {
+            if (token == lastTokenL) stableCountL++ else { lastTokenL = token; stableCountL = 1 }
+            if (stableCountL >= 2 && token != confirmedTokenL) {
+                confirmedTokenL = token
+                ui.addToken('L', token)
+            }
+        } else {
+            if (token == lastTokenR) stableCountR++ else { lastTokenR = token; stableCountR = 1 }
+            if (stableCountR >= 2 && token != confirmedTokenR) {
+                confirmedTokenR = token
+                ui.addToken('R', token)
+            }
+        }
+    }
+
+    private fun makeToken(bands: List<Pair<Double, Double>>): Int {
+        var token = 0
+        for ((i, b) in bands.withIndex()) {
+            val e = toDbSpl(b.first)
+            val bits = when {
+                e < 40 -> 0b00
+                e < 70 -> 0b01
+                e < 100 -> 0b10
+                else -> 0b11
+            }
+            token = (token shl 2) or bits
+        }
+        return token and 0xFFFF
+    }
+
+    private fun analyzeBands(x: DoubleArray): List<Pair<Double, Double>> {
+        val Nlocal = x.size
+        val out = ArrayList<Pair<Double, Double>>(bands.size)
+        for (f in bands) {
+            val w = 2.0 * Math.PI * f / sampleRate
+            val cw = cos(w)
+            val sw = sin(w)
+            var s0 = 0.0; var s1 = 0.0; var s2 = 0.0
+            val coeff = 2.0 * cw
+            for (n in 0 until Nlocal) {
+                s0 = x[n] + coeff * s1 - s2
+                s2 = s1; s1 = s0
+            }
+            val real = s1 - s2 * cw
+            val imag = s2 * sw
+            val mag = sqrt(real * real + imag * imag) / (Nlocal / 2.0 + 1e-9)
+            val phase = Math.toDegrees(atan2(imag, real))
+            out += mag to phase
+        }
+        return out
+    }
+
+    private fun toDbSpl(mag: Double): Double {
+        val norm = (mag / 32768.0).coerceIn(1e-9, 1.0)
+        return 20.0 * log10(norm) + 120.0
     }
 
     private fun ensureMicPermission() {
@@ -158,7 +263,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         WkSafetyMonitor.stop()
     }
 
-    // ---------- 내부 UI ----------
     private class Ui(private val act: AppCompatActivity) {
         val root = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
@@ -172,17 +276,30 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         val phaseGraph = WkPhaseScatterView(act).apply {
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                300
+                LinearLayout.LayoutParams.MATCH_PARENT, 320
             )
         }.also { root.addView(it) }
 
-        val tokenText = TextView(act).apply {
-            textSize = 13f
-            gravity = Gravity.START
+        private val tokenLeft = TextView(act).apply {
+            text = "L: "
+            textSize = 14f
             setHorizontallyScrolling(true)
-            text = "화자별 토큰 출력 대기 중..."
+            isSingleLine = true
         }.also { root.addView(it) }
+
+        private val tokenRight = TextView(act).apply {
+            text = "R: "
+            textSize = 14f
+            setHorizontallyScrolling(true)
+            isSingleLine = true
+        }.also { root.addView(it) }
+
+        fun addToken(side: Char, token: Int) {
+            val s = String.format("%04X ", token)
+            val tv = if (side == 'L') tokenLeft else tokenRight
+            val txt = tv.text.toString() + s
+            tv.text = if (txt.length > 150) txt.takeLast(150) else txt
+        }
 
         fun addBandRow(text: String): Row {
             val label = TextView(act).apply { this.text = text; textSize = 15f }
@@ -206,13 +323,12 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             root.addView(line)
 
             val valueText = TextView(act).apply {
-                this.text =
-                    "AVG  0.0 dB | L  0.0 dB, φ +000° | R  0.0 dB, φ +000° | Δφ +000°"
+              this.text =
+                    "AVG 0.0 | L 0.0 φ +000 | R 0.0 φ +000 | Δφ +000°"
                 textAlignment = TextView.TEXT_ALIGNMENT_CENTER
                 gravity = Gravity.CENTER_HORIZONTAL
             }
             root.addView(valueText)
-
             return Row(label, left, right, valueText)
         }
     }
