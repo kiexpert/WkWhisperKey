@@ -135,7 +135,10 @@ class WkVoiceSeparator(
             val near = old.find { abs(it.deltaIndex - n.deltaIndex) < 4 && abs(it.freq - n.freq) < 80 }
             if (near == null) merged += n
         }
-        if (merged.size > 8) merged.sortByDescending { it.energy }.dropLast(merged.size - 8)
+        if (merged.size > 8) {
+            merged.sortByDescending { it.energy }
+            while (merged.size > 8) merged.removeLast()
+        }
         return merged.toMutableList()
     }
 
