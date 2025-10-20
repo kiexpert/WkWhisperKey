@@ -36,45 +36,57 @@ class WkVoiceSeparator(
     private val maxSampleDelay = (sampleRate / bands.first()).toInt()
     private var activeKeys = mutableListOf<VoiceKey>()
 
-    /** L/R 음원 입력 → 화자별 분리 결과 반환 */
+    // --- 교체: separate() ---
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
         val preKeys = activeKeys.toList()
-        val preSpeakers = preprocessByVoiceKeys(preKeys, L, R)
-        val (resL, resR) = computeResidual(L, R, preSpeakers)
+        val (speakers, resL, resR) = preprocessByVoiceKeys(preKeys, L, R) // residual 반환
         val newKeys = postprocessResidual(resL, resR)
         activeKeys = mergeKeys(preKeys, newKeys)
-        return preSpeakers
+        return speakers
     }
-
-    /** 기존 발성키 기반 전처리 */
-    private fun preprocessByVoiceKeys(keys: List<VoiceKey>, L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
+    
+    // --- 교체: preprocessByVoiceKeys() => residual 함께 반환 ---
+    private fun preprocessByVoiceKeys(
+        keys: List<VoiceKey>,
+        Lsrc: DoubleArray,
+        Rsrc: DoubleArray
+    ): Triple<List<SpeakerSignal>, DoubleArray, DoubleArray> {
+    
+        val residualL = Lsrc.copyOf()
+        val residualR = Rsrc.copyOf()
         val result = mutableListOf<SpeakerSignal>()
-        var residualL = L.copyOf()
-        var residualR = R.copyOf()
-
+    
+        // 에너지 높은 키부터 적용
         for (key in keys.sortedByDescending { it.energy }) {
-            val delta = key.deltaIndex
-            val speaker = DoubleArray(L.size)
-
-            for (i in 0 until L.size) {
-                val idxL = i
-                val idxR = i - delta
-                val ref = if (idxL !in residualL.indices || idxR !in residualR.indices) 0.0
-                else (residualL[idxL] + residualR[idxR]) * 0.5
-
-                val overshoot = abs(delta).coerceAtMost(L.size)
-                val micCount = 2
-                val gainComp = 1.0 - (overshoot - overshoot / micCount.toDouble()) / L.size
-                val compensated = ref * gainComp
-
-                speaker[i] = compensated
-                residualL[idxL] -= compensated
-                if (idxR in residualR.indices) residualR[idxR] -= compensated
+            val d = key.deltaIndex
+            val spk = DoubleArray(Lsrc.size)
+    
+            // i는 L 기준, R는 (i - d) 지연 정렬
+            for (i in residualL.indices) {
+                val j = i - d
+                val r = if (j in residualR.indices) residualR[j] else 0.0
+                val l = residualL[i]
+                val s = 0.5 * (l + r)                // delay-and-sum 추정치
+    
+                spk[i] = s
+                residualL[i] = l - s                  // 양쪽 동시 차감
+                if (j in residualR.indices) residualR[j] = r - s
             }
-            result += SpeakerSignal(key.id, speaker, key.energy, delta)
+    
+            // 에너지 재계산(RMS)
+            var sum = 0.0
+            for (x in spk) sum += x * x
+            val rms = kotlin.math.sqrt(sum / spk.size)
+            val eDb = 20.0 * kotlin.math.log10(rms / 32768.0 + 1e-9) + 120.0
+    
+            result += SpeakerSignal(key.id, spk, eDb, d)
         }
-        return result
+    
+        return Triple(result, residualL, residualR)
     }
+    
+    // --- 교체: computeResidual() 더 이상 사용하지 않음 (제거하거나 미사용 표시) ---
+    // postprocessResidual()는 preprocess가 반환한 residualL/residualR 사용
 
     /** 잔여음원 계산 */
     private fun computeResidual(L: DoubleArray, R: DoubleArray, speakers: List<SpeakerSignal>): Pair<DoubleArray, DoubleArray> {
