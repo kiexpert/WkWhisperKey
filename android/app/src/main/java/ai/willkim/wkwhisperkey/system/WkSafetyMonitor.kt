@@ -69,4 +69,9 @@ object WkSafetyMonitor {
     fun stop() {
         scope?.cancel()
     }
+
+    fun report(ex: Exception) {
+        Log.e("WkSafetyMonitor", "예외: ${ex.javaClass.simpleName}: ${ex.message}")
+        ex.printStackTrace()
+    }
 }
