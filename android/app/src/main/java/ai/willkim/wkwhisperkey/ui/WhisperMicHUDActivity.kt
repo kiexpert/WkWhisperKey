@@ -38,7 +38,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         main.postDelayed({ micManager.startStereo() }, 800)
     }
 
-    private fun onPcm(stereo: ShortArray) {
+    private fun xonPcm(stereo: ShortArray) {
         val L = DoubleArray(stereo.size / 2)
         val R = DoubleArray(stereo.size / 2)
         var i = 0
@@ -53,6 +53,35 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         updateUi(speakers, tokens)
     }
 
+    private fun onPcm(stereo: ShortArray?) {
+        try {
+            if (stereo == null || stereo.size < 4) return
+    
+            val n = stereo.size / 2
+            val L = DoubleArray(n)
+            val R = DoubleArray(n)
+            for (i in 0 until n) {
+                L[i] = stereo[i * 2].toDouble()
+                R[i] = stereo[i * 2 + 1].toDouble()
+            }
+    
+            val speakers = voiceSeparator.processFrame(L, R)
+            val tokens = tokenizer.tokenizeAll(speakers)
+    
+            runOnUiThread {
+                try {
+                    updateUi(speakers, tokens)
+                } catch (uiEx: Exception) {
+                    WkSafetyMonitor.report(uiEx)
+                    Toast.makeText(this, "UI 예외: ${uiEx.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (ex: Exception) {
+            WkSafetyMonitor.report(ex)
+            Toast.makeText(this, "오디오 예외: ${ex.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     private fun updateUi(list: List<WkVoiceSeparator.SpeakerInfo>, tokens: Map<Int,String>) {
         ui.listLayout.removeAllViews()
         list.forEach {
