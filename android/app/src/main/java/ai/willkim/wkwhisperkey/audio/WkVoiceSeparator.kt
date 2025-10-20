@@ -3,110 +3,164 @@ package ai.willkim.wkwhisperkey.audio
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator – 다중 화자 분리 엔진
+ * WkVoiceSeparator
+ * 위상차 기반 화자 분리기 (Phase-Delay Separation Engine)
+ *
+ * 1. 기존 발성키(Δsample) 기반 전처리 (FFT 불필요)
+ * 2. 잔여음원에서 FFT로 신규 발성키 탐색 (후처리)
+ * 3. 경계 보정 및 overshoot 보정 포함
+ *
  * (C) 2025 Will Kim (kiexpert@kivilab.co.kr)
  */
-class WkVoiceSeparator(private val sampleRate: Int) {
 
-    private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
-    private val cSound = 343.0      // m/s
-    private val micDist = 0.02      // 2 cm 기본 간격
-    private val noiseFloor = DoubleArray(bands.size) { 1e-9 }
+data class VoiceKey(
+    val id: Int,
+    val freq: Double,
+    val deltaIndex: Int,
+    val energy: Double
+)
 
-    private var nextId = 1
-    private val prevKeys = mutableListOf<VoiceKey>()
+data class SpeakerSignal(
+    val id: Int,
+    val samples: DoubleArray,
+    val energy: Double,
+    val deltaIndex: Int
+)
 
-    data class VoiceKey(
-        val freq: Double,
-        val deltaSamples: Int,
-        var framesAlive: Int = 1,
-        var confidence: Double = 0.3
-    )
+class WkVoiceSeparator(
+    private val sampleRate: Int,
+    private val bands: DoubleArray
+) {
+    private var nextId = 1000
+    private val maxSampleDelay = (sampleRate / bands.first()).toInt()
+    private var activeKeys = mutableListOf<VoiceKey>()
 
-    data class SpeakerInfo(
-        val id: Int,
-        val distanceM: Double,
-        val angleDeg: Double,
-        val rmsDb: Double,
-        val buffer: ShortArray
-    )
-
-    fun processFrame(left: DoubleArray, right: DoubleArray): List<SpeakerInfo> {
-        val keys = detectKeys(left, right)
-        val matched = matchKeys(keys)
-        val speakers = clusterSpeakers(matched)
-        return speakers
+    /**
+     * L/R 음원 입력 → 화자별 분리 결과 반환
+     */
+    fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
+        val preKeys = activeKeys.toList()
+        val preSpeakers = preprocessByVoiceKeys(preKeys, L, R)
+        val (resL, resR) = computeResidual(L, R, preSpeakers)
+        val newKeys = postprocessResidual(resL, resR)
+        activeKeys = mergeKeys(preKeys, newKeys)
+        return preSpeakers
     }
 
-    // --- 주파수별 위상차 → Δn 계산 ---
-    private fun detectKeys(L: DoubleArray, R: DoubleArray): List<VoiceKey> {
-        val out = mutableListOf<VoiceKey>()
-        for (i in bands.indices) {
-            val f = bands[i]
-            val wl = analyzeBand(L, f)
-            val wr = analyzeBand(R, f)
-            val dPhi = normalizePhase(wr.second - wl.second)
-            val deltaN = (dPhi / 360.0 * sampleRate / f).roundToInt()
-            out += VoiceKey(f, deltaN)
+    /**
+     * 기존 발성키 기반 전처리 (FFT 없음)
+     */
+    private fun preprocessByVoiceKeys(keys: List<VoiceKey>, L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
+        val result = mutableListOf<SpeakerSignal>()
+        var residualL = L.copyOf()
+        var residualR = R.copyOf()
+
+        for (key in keys.sortedByDescending { it.energy }) {
+            val delta = key.deltaIndex
+            val speaker = DoubleArray(L.size)
+
+            for (i in 0 until L.size) {
+                val idxL = i
+                val idxR = i - delta
+
+                val ref = when {
+                    idxL !in residualL.indices || idxR !in residualR.indices -> 0.0
+                    else -> (residualL[idxL] + residualR[idxR]) * 0.5
+                }
+
+                val overshoot = abs(delta).coerceAtMost(L.size)
+                val micCount = 2
+                val gainComp = 1.0 - (overshoot - overshoot / micCount.toDouble()) / L.size
+                val compensated = ref * gainComp
+
+                speaker[i] = compensated
+                residualL[idxL] -= compensated
+                if (idxR in residualR.indices) residualR[idxR] -= compensated
+            }
+
+            result += SpeakerSignal(key.id, speaker, key.energy, delta)
         }
-        return out
+
+        return result
     }
 
-    // --- FFT 대체용 밴드 추정기 ---
-    private fun analyzeBand(x: DoubleArray, f: Double): Pair<Double, Double> {
+    /**
+     * 잔여음원 계산
+     */
+    private fun computeResidual(L: DoubleArray, R: DoubleArray, speakers: List<SpeakerSignal>): Pair<DoubleArray, DoubleArray> {
+        val resL = L.copyOf()
+        val resR = R.copyOf()
+        for (spk in speakers) {
+            for (i in spk.samples.indices) {
+                resL[i] -= spk.samples[i]
+                val idxR = i - spk.deltaIndex
+                if (idxR in resR.indices) resR[idxR] -= spk.samples[i]
+            }
+        }
+        return resL to resR
+    }
+
+    /**
+     * 잔여음원 FFT로 신규 발성키 탐색
+     */
+    private fun postprocessResidual(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
+        val newKeys = mutableListOf<VoiceKey>()
+        val N = Lres.size
+        val fftL = fft(Lres)
+        val fftR = fft(Rres)
+
+        for (f in bands) {
+            val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
+            val phaseL = atan2(fftL[bin].imag, fftL[bin].real)
+            val phaseR = atan2(fftR[bin].imag, fftR[bin].real)
+            val deltaPhi = phaseR - phaseL
+            val deltaIndex = (deltaPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
+            if (abs(deltaIndex) < maxSampleDelay) {
+                val magL = sqrt(fftL[bin].real * fftL[bin].real + fftL[bin].imag * fftL[bin].imag)
+                val magR = sqrt(fftR[bin].real * fftR[bin].real + fftR[bin].imag * fftR[bin].imag)
+                val energy = 20.0 * log10((magL + magR) / 2.0 + 1e-9)
+                newKeys += VoiceKey(nextId++, f, deltaIndex, energy)
+            }
+        }
+        return newKeys
+    }
+
+    /**
+     * 키 병합 (중복 최소화)
+     */
+    private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): MutableList<VoiceKey> {
+        val merged = mutableListOf<VoiceKey>()
+        merged += old
+        for (n in new) {
+            val near = old.find { abs(it.deltaIndex - n.deltaIndex) < 4 && abs(it.freq - n.freq) < 80 }
+            if (near == null) merged += n
+        }
+        if (merged.size > 8) merged.sortByDescending { it.energy }.dropLast(merged.size - 8)
+        return merged.toMutableList()
+    }
+
+    // 간단한 FFT (Cooley–Tukey radix-2)
+    private fun fft(x: DoubleArray): Array<Complex> {
         val N = x.size
-        val w = 2.0 * Math.PI * f / sampleRate
-        var re = 0.0
-        var im = 0.0
-        for (i in 0 until N) {
-            val c = cos(w * i)
-            val s = sin(w * i)
-            re += x[i] * c
-            im -= x[i] * s
+        if (N <= 1) return arrayOf(Complex(x[0], 0.0))
+        val even = fft(x.filterIndexed { i, _ -> i % 2 == 0 }.toDoubleArray())
+        val odd = fft(x.filterIndexed { i, _ -> i % 2 == 1 }.toDoubleArray())
+        val result = Array(N) { Complex(0.0, 0.0) }
+        for (k in 0 until N / 2) {
+            val t = Complex.polar(1.0, -2 * Math.PI * k / N) * odd[k]
+            result[k] = even[k] + t
+            result[k + N / 2] = even[k] - t
         }
-        val mag = sqrt(re * re + im * im) / N
-        val phase = Math.toDegrees(atan2(im, re))
-        return mag to phase
+        return result
     }
 
-    private fun normalizePhase(phi: Double): Double {
-        var p = phi
-        while (p > 180) p -= 360
-        while (p < -180) p += 360
-        return p
-    }
+    private data class Complex(val real: Double, val imag: Double) {
+        operator fun plus(o: Complex) = Complex(real + o.real, imag + o.imag)
+        operator fun minus(o: Complex) = Complex(real - o.real, imag - o.imag)
+        operator fun times(o: Complex) = Complex(real * o.real - imag * o.imag, real * o.imag + imag * o.real)
 
-    // --- 프레임 간 발성키 정합 ---
-    private fun matchKeys(newKeys: List<VoiceKey>): List<VoiceKey> {
-        val matched = mutableListOf<VoiceKey>()
-        for (k in newKeys) {
-            val m = prevKeys.find { abs(it.deltaSamples - k.deltaSamples) <= 2 && abs(it.freq - k.freq) < 50 }
-            if (m != null) {
-                m.framesAlive++
-                m.confidence = 0.7 * m.confidence + 0.3
-                matched += m
-            } else matched += k
+        companion object {
+            fun polar(r: Double, theta: Double) = Complex(r * cos(theta), r * sin(theta))
         }
-        prevKeys.clear()
-        prevKeys += matched
-        return matched.filter { it.framesAlive >= 2 && it.confidence > 0.5 }
-    }
-
-    // --- Δn 클러스터링 → 화자 추정 ---
-    private fun clusterSpeakers(keys: List<VoiceKey>): List<SpeakerInfo> {
-        if (keys.isEmpty()) return emptyList()
-        val grouped = keys.groupBy { it.deltaSamples / 2 }
-        val list = mutableListOf<SpeakerInfo>()
-        for ((delta, ks) in grouped) {
-            val avgF = ks.map { it.freq }.average()
-            val deltaT = delta / sampleRate.toDouble()
-            val pathDiff = deltaT * cSound
-            val angle = Math.toDegrees(asin((pathDiff / micDist).coerceIn(-1.0, 1.0)))
-            val dist = 1.0 / cos(Math.toRadians(angle)) * micDist
-            val mag = ks.size * 20.0 + 60.0
-            val buf = ShortArray(256) // Dummy buffer placeholder
-            list += SpeakerInfo(nextId++, dist, angle, mag, buf)
-        }
-        return list
     }
 }
