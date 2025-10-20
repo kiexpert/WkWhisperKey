@@ -115,8 +115,8 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         for (i in 0 until N) {
             val avg = (L[i] + R[i]) * 0.5
             AVG[i] = avg
-            repL[i] = L[i] - avg
-            repR[i] = R[i] - avg
+            repL[i] = L[i] //- avg
+            repR[i] = R[i] //- avg
         }
 
         for (i in 0 until N) {
