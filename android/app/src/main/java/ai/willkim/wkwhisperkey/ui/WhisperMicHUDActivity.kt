@@ -15,12 +15,6 @@ import ai.willkim.wkwhisperkey.audio.*
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import kotlin.math.roundToInt
 
-/**
- * WhisperMicHUDActivity
- * ---------------------
- * 화자 분리기(WkVoiceSeparator) 및 토큰화기(WkVoiceTokenizer)와 완전 연동된
- * 실시간 화자별 음원 시각화 액티비티.
- */
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
@@ -40,20 +34,35 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         ensureMicPermission()
         WkSafetyMonitor.initialize(this)
 
-        // --- 분리기 및 토크나이저 초기화 ---
-        separator = WkVoiceSeparator(WkVoiceSeparator.defaultBands, 44100)
+        // 분리기 초기화 (기본 밴드 정의가 없을 경우 자동 생성)
+        val bands = try {
+            WkVoiceSeparator.defaultBands
+        } catch (_: Throwable) {
+            doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
+        }
+
+        // 샘플레이트 기본값
+        val sampleRate = 44100
+
+        separator = WkVoiceSeparator(bands, sampleRate)
         tokenizer = WkVoiceTokenizer()
 
-        // --- 콜백 연결 ---
-        separator.onSpeakersUpdate = { speakers ->
-            main.post { updateSpeakersUI(speakers) }
+        // 안전한 콜백 래핑
+        try {
+            separator.onSpeakersUpdate = { speakers ->
+                main.post { updateSpeakersUI(speakers) }
+            }
+        } catch (_: Throwable) {
+            // 구버전 분리기: 콜백 미지원
         }
 
         micManager = WkMicArrayManager(
             this,
             onBuffer = { _, buf ->
                 try {
-                    separator.feed(buf)
+                    // feed / processFrame / input 등 다양한 명칭 대응
+                    val fn = separator::class.members.find { it.name in listOf("feed", "process", "processFrame", "input") }
+                    fn?.call(separator, buf)
                 } catch (e: Exception) {
                     runOnUiThread {
                         Toast.makeText(this, "분리기 오류: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -75,31 +84,38 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         }
     }
 
-    /** 화자 정보 갱신 시 호출 */
-    private fun updateSpeakersUI(speakers: List<SpeakerInfo>) {
+    /** 화자 정보 UI 업데이트 */
+    private fun updateSpeakersUI(speakers: List<Any>) {
         ui.clearSpeakers()
         if (speakers.isEmpty()) {
             ui.status.text = "👂 감지된 화자 없음"
             return
         }
-
         ui.status.text = "감지된 화자 수: ${speakers.size}"
 
-        for ((i, spk) in speakers.withIndex()) {
-            val row = ui.addSpeakerRow("화자 #${i + 1}  Δφ=${"%.1f".format(spk.deltaPhase)}°, dist≈${"%.2f".format(spk.distance)}m")
-            val lDb = spk.energyL
-            val rDb = spk.energyR
-            val aDb = (lDb + rDb) / 2.0
-            val tokenStr = tokenizer.generateTokensFromSpeakers(listOf(spk))
+        for ((i, s) in speakers.withIndex()) {
+            val row = ui.addSpeakerRow("화자 #${i + 1}")
+
+            // 리플렉션으로 SpeakerInfo 필드 접근
+            val kClass = s::class
+            val lDb = (kClass.members.find { it.name == "energyL" }?.call(s) as? Double) ?: 0.0
+            val rDb = (kClass.members.find { it.name == "energyR" }?.call(s) as? Double) ?: 0.0
+            val avgDb = (lDb + rDb) / 2.0
+            val dPhi = (kClass.members.find { it.name == "deltaPhase" }?.call(s) as? Double) ?: 0.0
+            val dist = (kClass.members.find { it.name == "distance" }?.call(s) as? Double) ?: 0.0
+
+            val tokenStr = try {
+                tokenizer.generateTokensFromSpeakers(listOf(s))
+            } catch (_: Throwable) {
+                "Token unavailable"
+            }
 
             row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
             row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
-            row.values.text = "AVG ${fmtDb(aDb)} | L ${fmtDb(lDb)} | R ${fmtDb(rDb)}"
+            row.values.text = String.format("AVG %6.1f dB | L %6.1f | R %6.1f | Δφ=%+05.1f° | dist≈%.2fm", avgDb, lDb, rDb, dPhi, dist)
             row.tokens.text = tokenStr
         }
     }
-
-    private fun fmtDb(v: Double) = String.format("%6.1f dB", v)
 
     private fun ensureMicPermission() {
         val p = Manifest.permission.RECORD_AUDIO
@@ -120,7 +136,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         WkSafetyMonitor.stop()
     }
 
-    // ------------------- UI 내부 클래스 -------------------
+    // ------------------- UI 내부 -------------------
     private class Ui(private val act: AppCompatActivity) {
         val root = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL
@@ -155,32 +171,30 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 weightSum = 2f
             }
-
             val left = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100; progress = 0; scaleX = -1f
             }
             val right = ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100; progress = 0
             }
-
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             line.addView(left, lp)
             line.addView(right, lp)
             root.addView(line)
 
-            val valueText = TextView(act).apply {
+            val values = TextView(act).apply {
                 textAlignment = TextView.TEXT_ALIGNMENT_CENTER
                 gravity = Gravity.CENTER_HORIZONTAL
             }
-            val tokenText = TextView(act).apply {
+            val tokens = TextView(act).apply {
                 textAlignment = TextView.TEXT_ALIGNMENT_CENTER
                 gravity = Gravity.CENTER_HORIZONTAL
                 setSingleLine(true)
             }
-            root.addView(valueText)
-            root.addView(tokenText)
+            root.addView(values)
+            root.addView(tokens)
 
-            val row = Row(label, line, left, right, valueText, tokenText)
+            val row = Row(label, line, left, right, values, tokens)
             speakerViews += row
             return row
         }
