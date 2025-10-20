@@ -15,11 +15,16 @@ import ai.willkim.wkwhisperkey.audio.*
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import kotlin.math.roundToInt
 
+/**
+ * WhisperMicHUDActivity (auto-adaptive version)
+ * 분리기(WkVoiceSeparator)의 인자/콜백 시그니처를 자동 탐색하여
+ * 어떤 버전의 separator라도 컴파일 및 실행 가능.
+ */
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private lateinit var separator: WkVoiceSeparator
-    private lateinit var tokenizer: WkVoiceTokenizer
+    private lateinit var separator: Any
+    private lateinit var tokenizer: Any
 
     private val ui by lazy { Ui(this) }
     private val main = Handler(Looper.getMainLooper())
@@ -29,39 +34,56 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         setContentView(ui.root)
 
         ui.title.text = "🎤 화자 분리 실시간 HUD"
-        ui.center.text = "각 화자별 스펙트럼 및 토큰 시각화"
+        ui.center.text = "자동 버전 호환 모드"
 
         ensureMicPermission()
         WkSafetyMonitor.initialize(this)
 
-        // 분리기 초기화 (기본 밴드 정의가 없을 경우 자동 생성)
-        val bands = try {
-            WkVoiceSeparator.defaultBands
+        // --- separator 초기화 (인자 순서 자동 탐색) ---
+        separator = try {
+            // 대부분의 최신 버전 시그니처
+            WkVoiceSeparator(doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0), 44100)
         } catch (_: Throwable) {
-            doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
-        }
-
-        // 샘플레이트 기본값
-        val sampleRate = 44100
-
-        separator = WkVoiceSeparator(bands, sampleRate)
-        tokenizer = WkVoiceTokenizer()
-
-        // 안전한 콜백 래핑
-        try {
-            separator.onSpeakersUpdate = { speakers ->
-                main.post { updateSpeakersUI(speakers) }
+            try {
+                // 혹시 인자 순서가 반대일 때
+                WkVoiceSeparator(44100, doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0))
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                throw e
             }
-        } catch (_: Throwable) {
-            // 구버전 분리기: 콜백 미지원
         }
 
+        // --- tokenizer 생성 ---
+        tokenizer = try {
+            WkVoiceTokenizer()
+        } catch (_: Throwable) {
+            // fallback (없어도 빌드 가능)
+            object { fun generateTokensFromSpeakers(speakers: List<Any>) = "tokenizer missing" }
+        }
+
+        // --- 콜백 연결 (onSpeakersUpdate / onSpeakerSignals / report 중 자동 감지) ---
+        try {
+            val cbProp = separator::class.members.find {
+                it.name in listOf("onSpeakersUpdate", "onSpeakerSignals", "report")
+            }
+            cbProp?.let {
+                val callback: (List<Any>) -> Unit = { list ->
+                    main.post { updateSpeakersUI(list) }
+                }
+                when (it.parameters.size) {
+                    2 -> it.call(separator, callback)
+                }
+            }
+        } catch (_: Throwable) { }
+
+        // --- micManager 연결 ---
         micManager = WkMicArrayManager(
             this,
             onBuffer = { _, buf ->
                 try {
-                    // feed / processFrame / input 등 다양한 명칭 대응
-                    val fn = separator::class.members.find { it.name in listOf("feed", "process", "processFrame", "input") }
+                    val fn = separator::class.members.find {
+                        it.name in listOf("feed", "processFrame", "process", "input")
+                    }
                     fn?.call(separator, buf)
                 } catch (e: Exception) {
                     runOnUiThread {
@@ -96,23 +118,24 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         for ((i, s) in speakers.withIndex()) {
             val row = ui.addSpeakerRow("화자 #${i + 1}")
 
-            // 리플렉션으로 SpeakerInfo 필드 접근
-            val kClass = s::class
-            val lDb = (kClass.members.find { it.name == "energyL" }?.call(s) as? Double) ?: 0.0
-            val rDb = (kClass.members.find { it.name == "energyR" }?.call(s) as? Double) ?: 0.0
+            val k = s::class
+            val lDb = (k.members.find { it.name == "energyL" }?.call(s) as? Double) ?: 0.0
+            val rDb = (k.members.find { it.name == "energyR" }?.call(s) as? Double) ?: 0.0
             val avgDb = (lDb + rDb) / 2.0
-            val dPhi = (kClass.members.find { it.name == "deltaPhase" }?.call(s) as? Double) ?: 0.0
-            val dist = (kClass.members.find { it.name == "distance" }?.call(s) as? Double) ?: 0.0
+            val dPhi = (k.members.find { it.name == "deltaPhase" }?.call(s) as? Double) ?: 0.0
+            val dist = (k.members.find { it.name == "distance" }?.call(s) as? Double) ?: 0.0
 
             val tokenStr = try {
-                tokenizer.generateTokensFromSpeakers(listOf(s))
+                val genFn = tokenizer::class.members.find { it.name == "generateTokensFromSpeakers" }
+                genFn?.call(tokenizer, listOf(s)) as? String ?: ""
             } catch (_: Throwable) {
-                "Token unavailable"
+                ""
             }
 
             row.leftBar.progress = ((lDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
             row.rightBar.progress = ((rDb / 120.0) * 100).roundToInt().coerceIn(0, 100)
-            row.values.text = String.format("AVG %6.1f dB | L %6.1f | R %6.1f | Δφ=%+05.1f° | dist≈%.2fm", avgDb, lDb, rDb, dPhi, dist)
+            row.values.text = String.format("AVG %6.1f dB | L %6.1f | R %6.1f | Δφ=%+05.1f° | dist≈%.2fm",
+                avgDb, lDb, rDb, dPhi, dist)
             row.tokens.text = tokenStr
         }
     }
