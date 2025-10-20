@@ -1,52 +1,97 @@
 package ai.willkim.wkwhisperkey.ui
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import ai.willkim.wkwhisperkey.viewmodel.WhisperVisualizerViewModel
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.*
+import android.view.Gravity
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import ai.willkim.wkwhisperkey.audio.*
 import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
-import ai.willkim.wkwhisperkey.whisper.native.WkSafetyBridge
+import kotlin.math.roundToInt
 
-class WhisperHUDActivity : ComponentActivity() {
+/**
+ * WhisperMicHUDActivity – 화자 분리 및 토큰 시각화 허브
+ */
+class WhisperMicHUDActivity : AppCompatActivity() {
 
-    private val viewModel: WhisperVisualizerViewModel by viewModels()
+    private val sampleRate = 44100
+    private lateinit var micManager: WkMicArrayManager
+    private lateinit var voiceSeparator: WkVoiceSeparator
+    private lateinit var tokenizer: WkVoiceTokenizer
+    private val main = Handler(Looper.getMainLooper())
+    private val ui by lazy { Ui(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        try {
-            WkSafetyMonitor.initialize(this)
-            WkSafetyBridge.registerContext(this)
-        } catch (e: UnsatisfiedLinkError) {
-            e.printStackTrace()
+        setContentView(ui.root)
+
+        ensureMicPermission()
+        WkSafetyMonitor.initialize(this)
+
+        voiceSeparator = WkVoiceSeparator(sampleRate)
+        tokenizer = WkVoiceTokenizer(doubleArrayOf(150.0,700.0,1100.0,1700.0,2500.0,3600.0,5200.0,7500.0))
+
+        micManager = WkMicArrayManager(this, onBuffer = { _, buf -> onPcm(buf) }, onEnergyLevel = { _, _ -> })
+        main.postDelayed({ micManager.startStereo() }, 800)
+    }
+
+    private fun onPcm(stereo: ShortArray) {
+        val L = DoubleArray(stereo.size / 2)
+        val R = DoubleArray(stereo.size / 2)
+        var i = 0
+        var j = 0
+        while (i < stereo.size - 1) {
+            L[j] = stereo[i].toDouble()
+            R[j] = stereo[i + 1].toDouble()
+            i += 2; j++
         }
+        val speakers = voiceSeparator.processFrame(L, R)
+        val tokens = tokenizer.tokenizeAll(speakers)
+        updateUi(speakers, tokens)
+    }
 
-        setContent {
-            MaterialTheme {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // ✅ 2. 로그 및 마이크 상태 오버레이
-                    LogVisualizerOverlay(
-                        context = this@WhisperHUDActivity,
-                        viewModel = viewModel,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0x66000000)) // 반투명 블랙 오버레이
-                    )
-
-                    // ✅ 1. Whisper 비주얼라이저 (배경)
-                    WhisperVisualizer(viewModel)
-                }
+    private fun updateUi(list: List<WkVoiceSeparator.SpeakerInfo>, tokens: Map<Int,String>) {
+        ui.listLayout.removeAllViews()
+        list.forEach {
+            val text = TextView(this).apply {
+                text = String.format(
+                    "화자 #%d | θ=%+05.1f° | d=%.2fm | E=%5.1f dB | %s",
+                    it.id, it.angleDeg, it.distanceM, it.rmsDb, tokens[it.id] ?: "0x0000"
+                )
+                textSize = 15f
+                gravity = Gravity.CENTER_HORIZONTAL
             }
+            ui.listLayout.addView(text)
         }
+    }
+
+    private fun ensureMicPermission() {
+        val p = Manifest.permission.RECORD_AUDIO
+        if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED)
+            ActivityCompat.requestPermissions(this, arrayOf(p), 101)
+    }
+
+    override fun onRequestPermissionsResult(c: Int, p: Array<out String>, r: IntArray) {
+        if (c == 101 && r.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+            main.postDelayed({ micManager.startStereo() }, 500)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        micManager.stopAll()
+        WkSafetyMonitor.stop()
+    }
+
+    private class Ui(act: AppCompatActivity) {
+        val root = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+        }
+        val listLayout = LinearLayout(act).apply {
+            orientation = LinearLayout.VERTICAL
+        }.also { root.addView(it) }
     }
 }
