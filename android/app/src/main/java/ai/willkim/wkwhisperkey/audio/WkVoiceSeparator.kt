@@ -25,7 +25,8 @@ data class SpeakerSignal(
     val id: Int,
     val samples: DoubleArray,
     val energy: Double,
-    val deltaIndex: Int
+    val deltaIndex: Int,
+    val distance: Double
 )
 
 class WkVoiceSeparator(
@@ -79,7 +80,16 @@ class WkVoiceSeparator(
             val rms = kotlin.math.sqrt(sum / spk.size)
             val eDb = 20.0 * kotlin.math.log10(rms / 32768.0 + 1e-9) + 120.0
     
-            result += SpeakerSignal(key.id, spk, eDb, d)
+            // 거리 계산: Δindex → 초 단위 지연 → 거리(m)
+            val dist = abs(key.deltaIndex) / sampleRate.toDouble() * 343.0
+            
+            result += SpeakerSignal(
+                key.id,
+                speaker,
+                key.energy,
+                key.deltaIndex,
+                dist
+            )
         }
     
         return Triple(result, residualL, residualR)
