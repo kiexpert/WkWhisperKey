@@ -179,7 +179,14 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             avgR /= bands.size
 
             // --- 주파수별 위상 스펙트럼 점 그래프 ---
-            ui.phaseGraph.onFrame(phaseArr, magArr)
+            //ui.phaseGraph.onFrame(phaseArr, magArr)
+            // 기존: ui.phaseGraph.onFrame(dPhiDeg, ampDb)
+            val phaseL = DoubleArray(bands.size) { resL[it].second }   // L 위상
+            val phaseR = DoubleArray(bands.size) { resR[it].second }   // R 위상
+            val amp = DoubleArray(bands.size) { max(resA[it].first - noiseFloor[it], 1e-9) }
+            
+            ui.phaseGraph.onFrame(phaseL, amp)
+            ui.phaseGraph.onFrame(phaseR, amp)
         }
     }
 
