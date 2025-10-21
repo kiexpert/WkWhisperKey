@@ -1,25 +1,25 @@
 package ai.willkim.wkwhisperkey.ui
 
-import ai.willkim.wkwhisperkey.audio.*
-import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.graphics.*
 import android.os.*
-import android.view.Gravity
+import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import ai.willkim.wkwhisperkey.audio.*
+import ai.willkim.wkwhisperkey.system.WkSafetyMonitor
 import kotlin.math.*
 
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
     private lateinit var separator: WkVoiceSeparator
-    private val ui by lazy { Ui(this) }
     private val main = Handler(Looper.getMainLooper())
 
+    // ----- 분석 파라미터 -----
     private val sampleRate = 44100
     private val frameMs = 20
     private val N = (sampleRate * frameMs / 1000.0).roundToInt()
@@ -29,36 +29,48 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private val ring = ShortArray(4 * N)
     private var rp = 0
     private var filled = 0
-    private var frameCount = 0
+
+    private val infoText by lazy { TextView(this) }
+    private val speakerMap by lazy { WkSpeakerMapView(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(ui.root)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+        }
 
-        ui.title.text = "🎤 화자 분리 실시간 HUD"
-        ui.center.text = "Phase-Delay Separation Engine"
+        val title = TextView(this).apply {
+            text = "🎤 멀티발성키 화자분리 뷰"
+            textSize = 18f
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        root.addView(title)
+
+        root.addView(speakerMap, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 400
+        ))
+
+        infoText.textSize = 13f
+        infoText.setTextColor(Color.WHITE)
+        root.addView(infoText)
+        setContentView(root)
 
         WkSafetyMonitor.initialize(this)
-        ensureMicPermission()
-
         separator = WkVoiceSeparator(sampleRate, bands)
+        ensureMicPermission()
 
         micManager = WkMicArrayManager(
             this,
             onBuffer = { _, buf -> onPcm(buf) },
             onEnergyLevel = { _, _ -> }
         )
-
         main.postDelayed({ startMic() }, 600)
     }
 
     private fun startMic() {
-        try {
-            Toast.makeText(this, "🎙 스테레오 수집 시작", Toast.LENGTH_SHORT).show()
-            micManager.startStereo()
-        } catch (e: Exception) {
-            Toast.makeText(this, "시작 실패: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        Toast.makeText(this, "🎧 마이크 활성화 중...", Toast.LENGTH_SHORT).show()
+        micManager.startStereo()
     }
 
     private fun onPcm(stereo: ShortArray) {
@@ -67,7 +79,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             rp = (rp + 1) % ring.size
         }
         filled = (filled + stereo.size).coerceAtMost(ring.size)
-        if (filled >= 2 * N && (frameCount++ % 2 == 0)) processFrame()
+        if (filled >= 2 * N && (filled % (2 * hop) == 0)) processFrame()
     }
 
     private fun processFrame() {
@@ -76,63 +88,28 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         var idx = (rp - 2 * N + ring.size) % ring.size
         var j = 0
         while (j < 2 * N) {
-            val l = ring[idx].toInt()
-            idx = (idx + 1) % ring.size
-            val r = ring[idx].toInt()
-            idx = (idx + 1) % ring.size
+            val l = ring[idx].toInt(); idx = (idx + 1) % ring.size
+            val r = ring[idx].toInt(); idx = (idx + 1) % ring.size
             L[j / 2] = l.toDouble()
             R[j / 2] = r.toDouble()
             j += 2
         }
 
-        val speakers = separator.separate(L, R)
-        updateUi(speakers)
-    }
-
-    private fun rmsEnergy(samples: DoubleArray): Double {
-        if (samples.isEmpty()) return 0.0
-        var sum = 0.0
-        for (x in samples) sum += x * x
-        val rms = sqrt(sum / samples.size)
-        return 20.0 * log10(rms / 32768.0 + 1e-9) + 120.0
-    }
-
-    private fun updateUi(speakers: List<SpeakerSignal>) {
-        main.post {
-            val updated = speakers.map { s ->
-                val newE = rmsEnergy(s.samples)
-                s.copy(energy = newE)
-            }
-            val displaySpeakers = updated.sortedByDescending { it.energy }.take(7)
-
+        // 화자 분리 수행
+        try {
+            val speakers = separator.separate(L, R)
+            val sorted = speakers.sortedByDescending { it.energy }.take(7)
             val sb = StringBuilder()
-            sb.append("감지된 화자 수: ${displaySpeakers.size}\n\n")
-
-            ui.gaugeContainer.removeAllViews()
-
-            displaySpeakers.forEachIndexed { i, spk ->
-                sb.append(
-                    String.format(
-                        "#%-2d  E=%6.1f dB | Δ=%+4d | samples=%d\n",
-                        i + 1, spk.energy, spk.deltaIndex, spk.samples.size
-                    )
-                )
-
-                val bar = ProgressBar(ui.context, null, android.R.attr.progressBarStyleHorizontal)
-                bar.max = 100
-                val level = ((spk.energy / 120.0) * 100).roundToInt().coerceIn(0, 100)
-                bar.progress = level
-                bar.progressDrawable.setTint(
-                    if (spk.deltaIndex >= 0) Color.rgb(255, 100, 100)
-                    else Color.rgb(100, 100, 255)
-                )
-                ui.gaugeContainer.addView(bar)
+            sb.append("화자수 ${sorted.size}\n")
+            sb.append("ID | Δindex | 거리(m) | 에너지(dB)\n")
+            for (s in sorted) {
+                sb.append(String.format("%4d | %7d | %7.2f | %7.1f\n",
+                    s.id, s.deltaIndex, s.distance, s.energy))
             }
-
-            ui.logText.text = sb.toString()
-            ui.logScroll.post { ui.logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
-
-            ui.mapView.updateSpeakers(speakers)
+            infoText.text = sb.toString()
+            speakerMap.updateSpeakers(sorted)
+        } catch (e: Exception) {
+            infoText.text = "분석 오류: ${e.message}"
         }
     }
 
@@ -146,7 +123,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(c, p, r)
         if (c == 101 && r.firstOrNull() == PackageManager.PERMISSION_GRANTED)
             main.postDelayed({ startMic() }, 500)
-        else Toast.makeText(this, "권한 필요", Toast.LENGTH_LONG).show()
     }
 
     override fun onDestroy() {
@@ -154,60 +130,51 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         micManager.stopAll()
         WkSafetyMonitor.stop()
     }
+}
 
-    private class Ui(val context: AppCompatActivity) {
-        val root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 16, 16, 16)
-        }
+/**
+ * WkSpeakerMapView
+ * └─ 화자 거리/각도 기반 실시간 맵
+ */
+class WkSpeakerMapView(ctx: android.content.Context) : View(ctx) {
+    private val paint = Paint().apply {
+        color = Color.CYAN
+        strokeWidth = 4f
+        isAntiAlias = true
+        textSize = 24f
+    }
+    private var speakers: List<SpeakerSignal> = emptyList()
 
-        val title = TextView(context).apply {
-            textSize = 18f
-            gravity = Gravity.START
-        }.also { root.addView(it) }
+    fun updateSpeakers(list: List<SpeakerSignal>) {
+        speakers = list
+        invalidate()
+    }
 
-        val center = TextView(context).apply {
-            textSize = 14f
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 8, 0, 16)
-        }.also { root.addView(it) }
+    override fun onDraw(c: Canvas) {
+        super.onDraw(c)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cx = w / 2f
+        val top = 80f
+        val maxDist = (speakers.maxOfOrNull { it.distance } ?: 1.0).toFloat()
 
-        // 게이지 컨테이너
-        val gaugeContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 8, 0, 16)
-        }.also { root.addView(it) }
+        // 마이크 표시
+        paint.color = Color.LTGRAY
+        c.drawCircle(cx - 100, top, 10f, paint)
+        c.drawCircle(cx + 100, top, 10f, paint)
+        c.drawText("L", cx - 130, top + 10f, paint)
+        c.drawText("R", cx + 115, top + 10f, paint)
 
-        // 스크롤 가능한 로그
-        val logScroll: ScrollView
-        val logText: TextView
-
-        val mapView = WkSpeakerMapView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 400
-            )
-        }
-
-        init {
-            logText = TextView(context).apply {
-                textSize = 12f
-                gravity = Gravity.START
-                setTextColor(Color.DKGRAY)
-                setPadding(4, 12, 4, 4)
-            }
-            logScroll = ScrollView(context).apply {
-                isFillViewport = true
-                addView(logText)
-            }
-            root.addView(
-                logScroll,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    0,
-                    1f
-                )
-            )
-            root.addView(mapView)
+        // 화자 표시
+        for ((i, spk) in speakers.withIndex()) {
+            val rel = spk.deltaIndex / 200.0f  // 좌우 위치 추정 (단순 스케일)
+            val distRatio = (spk.distance / maxDist).toFloat().coerceIn(0f, 1f)
+            val x = cx + rel * 200f
+            val y = top + 50f + distRatio * (h - 100f)
+            val hue = (i * 45f) % 360f
+            paint.color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
+            c.drawCircle(x, y, 16f, paint)
+            c.drawText("%.1fm".format(spk.distance), x - 35f, y + 30f, paint)
         }
     }
 }
