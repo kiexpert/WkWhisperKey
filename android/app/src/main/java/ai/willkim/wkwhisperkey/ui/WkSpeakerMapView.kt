@@ -37,6 +37,12 @@ class WkSpeakerMapView @JvmOverloads constructor(
         Color.GREEN, Color.BLUE, Color.rgb(0,0,139), Color.rgb(138,43,226)
     )
 
+    fun updateSpeakers(speakers: List<SpeakerSignal>, voiceKeys: List<VoiceKey>) {
+        this.speakers = speakers
+        this.allVoiceKeys = voiceKeys
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
