@@ -36,7 +36,7 @@ class WkVoiceSeparator(
 ) {
     private var nextId = 1000
     private val maxSampleDelay = (sampleRate / bands.first()).toInt()
-    private var activeKeys = mutableListOf<VoiceKey>()
+    public var activeKeys = mutableListOf<VoiceKey>()
 
     /** L/R 입력 → 화자별 분리 결과 */
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
