@@ -3,27 +3,29 @@ package ai.willkim.wkwhisperkey.audio
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v3
- * 에너지 패턴 기반 멀티발성키 화자 분리기
- *  - λ <= 0.2 m 핵심밴드, 0.2~1.0 m 보조밴드
- *  - 8밴드 정규화 에너지 패턴 유사도(코사인)
- *  - 위상차 무시, 반사음 포함 동일화자 클러스터링
- *  - 거리(mm) 단위 출력
+ * WkVoiceSeparator v4
+ * 위상차 유지 + 에너지비율 유사도 클러스터링
+ *  - 각 밴드 위상차 기반 발성키(VoiceKey) 생성
+ *  - 발성키 집합을 8밴드 에너지비율(정규화 벡터)로 화자(Speaker) 클러스터링
+ *  - 위상 정보로 거리(mm) 산출, 반사음 포함 동일화자 묶기
  */
 
-private const val RESIDUAL_ATTENUATION = 0.6   // 감쇠 비율 (1.0=완전차감, 0.0=미차감)
-private const val ENERGY_SIM_THRESHOLD = 0.85  // 화자 유사도 임계값
+private const val RESIDUAL_ATTENUATION = 0.6     // 음원 감쇠 비율 (1.0=완전차감)
+private const val ENERGY_SIM_THRESHOLD = 0.85    // 화자 유사도 임계값 (코사인)
+private const val ANGLE_SPREAD_DEG = 60.0        // 시각화용 최대 좌우각
+private const val SPEED_OF_SOUND = 343.0         // m/s
 
 data class VoiceKey(
     val id: Int,
     val freq: Double,
     val deltaIndex: Int,
-    val energy: Double
+    val energy: Double,
+    val distanceMm: Double
 )
 
 data class SpeakerSignal(
     val id: Int,
-    val samples: DoubleArray,
+    val keys: List<VoiceKey>,
     val energy: Double,
     val deltaIndex: Int,
     val distance: Double // mm 단위
@@ -33,29 +35,24 @@ class WkVoiceSeparator(
     private val sampleRate: Int,
     private val bands: DoubleArray
 ) {
-    private val c = 343.0
-    private val lambdaCoreMax = 0.2
-    private val lambdaAssistMax = 1.0
-    private val deltaIndexMax = max(1, floor((lambdaAssistMax / c) * sampleRate).toInt())
-
-    private var nextId = 1000
+    private var nextKeyId = 1000
+    private var nextSpeakerId = 1
     private var activeKeys = mutableListOf<VoiceKey>()
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
 
-    // -------------------- 메인 루프 --------------------
+    // -------------------- 메인 --------------------
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
-        val pre = activeKeys.toList()
-        val (preSpk, resL, resR) = preprocessByVoiceKeys(pre, L, R)
-        val newKeys = postprocessResidual(resL, resR)
-        activeKeys = newKeys.toMutableList()
-        return preSpk
+        val preKeys = activeKeys.toList()
+        val (preSpeakers, resL, resR) = preprocessByVoiceKeys(preKeys, L, R)
+        val newKeys = detectVoiceKeys(resL, resR)
+        activeKeys = mergeKeys(preKeys, newKeys).toMutableList()
+        return clusterByEnergyPattern(activeKeys)
     }
 
     // -------------------- 전처리 --------------------
     private fun preprocessByVoiceKeys(
         keys: List<VoiceKey>, Lsrc: DoubleArray, Rsrc: DoubleArray
     ): Triple<List<SpeakerSignal>, DoubleArray, DoubleArray> {
-
         val residualL = Lsrc.copyOf()
         val residualR = Rsrc.copyOf()
         val result = mutableListOf<SpeakerSignal>()
@@ -75,91 +72,94 @@ class WkVoiceSeparator(
 
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / 32768.0 + 1e-9) + 120.0
-            val distMm = abs(d) / sampleRate.toDouble() * c * 1000.0 // mm 단위
 
-            result += SpeakerSignal(key.id, spk, eDb, d, distMm)
+            result += SpeakerSignal(
+                key.id, listOf(key), eDb, d, key.distanceMm
+            )
         }
-
         return Triple(result, residualL, residualR)
     }
 
-    // -------------------- 후처리: 발성키 생성 --------------------
-    private fun postprocessResidual(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
+    // -------------------- 발성키 탐지 (위상차 유지) --------------------
+    private fun detectVoiceKeys(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
         val N = Lres.size
         val fftL = fft(Lres)
         val fftR = fft(Rres)
-
-        val coreBands = bands.filter { c / it <= lambdaCoreMax }
-        val deltaIdxByBand = mutableMapOf<Double, Int>()
-        val energyByBand = mutableMapOf<Double, Double>()
+        val keys = mutableListOf<VoiceKey>()
 
         for (f in bands) {
             val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
+            val phaseL = atan2(fftL[bin].imag, fftL[bin].real)
+            val phaseR = atan2(fftR[bin].imag, fftR[bin].real)
+            var dPhi = phaseR - phaseL
+            if (dPhi > Math.PI) dPhi -= 2 * Math.PI
+            if (dPhi < -Math.PI) dPhi += 2 * Math.PI
+
+            val deltaIdx = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
+            val distMm = abs(deltaIdx) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
             val magL = sqrt(fftL[bin].real * fftL[bin].real + fftL[bin].imag * fftL[bin].imag)
             val magR = sqrt(fftR[bin].real * fftR[bin].real + fftR[bin].imag * fftR[bin].imag)
             val energy = (magL + magR) / 2.0
-            energyByBand[f] = energy
 
-            val phaseL = atan2(fftL[bin].imag, fftL[bin].real)
-            val phaseR = atan2(fftR[bin].imag, fftR[bin].real)
-            val dPhi = (phaseR - phaseL).let {
-                when {
-                    it > Math.PI -> it - 2 * Math.PI
-                    it < -Math.PI -> it + 2 * Math.PI
-                    else -> it
-                }
+            if (abs(deltaIdx) < sampleRate / 100) { // 안전 한계 내
+                keys += VoiceKey(nextKeyId++, f, deltaIdx, energy, distMm)
             }
-            val deltaIdx = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
-            if (abs(deltaIdx) <= deltaIndexMax) deltaIdxByBand[f] = deltaIdx
         }
 
-        // 밴드 에너지 벡터
-        val energyVec = bands.map { f -> energyByBand[f] ?: 0.0 }.toDoubleArray()
-        val norm = sqrt(energyVec.sumOf { it * it }) + 1e-9
-        val normalizedVec = energyVec.map { it / norm }.toDoubleArray()
-
-        // 모든 밴드에서 클러스터링할 후보 1개만 생성
-        val newKeys = mutableListOf<VoiceKey>()
-        newKeys += VoiceKey(nextId++, bands.first(), 0, 20 * log10(norm + 1e-9))
-
-        // 단일 화자 → 멀티키화자 클러스터링 준비
-        return clusterByEnergyPattern(newKeys, mapOf(newKeys.first().id to normalizedVec))
+        // Δindex ±1 내의 밴드를 평균화하여 발성키 통합
+        return keys.groupBy { it.deltaIndex }.map { (_, grp) ->
+            val avgF = grp.map { it.freq }.average()
+            val avgE = grp.map { it.energy }.average()
+            val avgD = grp.map { it.distanceMm }.average()
+            VoiceKey(nextKeyId++, avgF, grp.first().deltaIndex, avgE, avgD)
+        }
     }
 
-    // -------------------- 에너지 벡터 기반 클러스터링 --------------------
-    private fun clusterByEnergyPattern(keys: List<VoiceKey>, bandEnergies: Map<Int, DoubleArray>): List<VoiceKey> {
+    // -------------------- 발성키 병합 --------------------
+    private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): List<VoiceKey> {
+        val merged = mutableListOf<VoiceKey>()
+        merged += old
+        for (n in new) {
+            val near = old.find { abs(it.deltaIndex - n.deltaIndex) < 3 }
+            if (near == null) merged += n
+        }
+        return merged.sortedByDescending { it.energy }
+    }
+
+    // -------------------- 에너지 패턴 기반 화자 클러스터링 --------------------
+    private fun clusterByEnergyPattern(keys: List<VoiceKey>): List<SpeakerSignal> {
         val groups = mutableListOf<MutableList<VoiceKey>>()
 
-        for (key in keys) {
-            val vecA = bandEnergies[key.id] ?: continue
+        for (k in keys) {
             var assigned = false
-
-            for (group in groups) {
-                val ref = group.first()
-                val vecB = bandEnergies[ref.id] ?: continue
-                val sim = cosineSim(vecA, vecB)
+            for (grp in groups) {
+                val sim = energyPatternSimilarity(k, grp.first())
                 if (sim > ENERGY_SIM_THRESHOLD) {
-                    group += key
+                    grp += k
                     assigned = true
                     break
                 }
             }
-            if (!assigned) groups += mutableListOf(key)
+            if (!assigned) groups += mutableListOf(k)
         }
 
-        val result = mutableListOf<VoiceKey>()
+        val result = mutableListOf<SpeakerSignal>()
         for (grp in groups) {
-            val meanFreq = grp.map { it.freq }.average()
-            val meanEnergy = grp.map { it.energy }.average()
-            result += VoiceKey(nextId++, meanFreq, 0, meanEnergy)
+            val id = nextSpeakerId++
+            val avgE = grp.map { it.energy }.average()
+            val avgΔ = grp.map { it.deltaIndex }.average().roundToInt()
+            val avgD = grp.map { it.distanceMm }.average()
+            result += SpeakerSignal(id, grp, avgE, avgΔ, avgD)
         }
         return result
     }
 
-    private fun cosineSim(a: DoubleArray, b: DoubleArray): Double {
-        val dot = a.zip(b).sumOf { it.first * it.second }
-        val normA = sqrt(a.sumOf { it * it })
-        val normB = sqrt(b.sumOf { it * it })
+    private fun energyPatternSimilarity(a: VoiceKey, b: VoiceKey): Double {
+        val aVec = doubleArrayOf(a.energy, a.freq)
+        val bVec = doubleArrayOf(b.energy, b.freq)
+        val dot = aVec.zip(bVec).sumOf { it.first * it.second }
+        val normA = sqrt(aVec.sumOf { it * it })
+        val normB = sqrt(bVec.sumOf { it * it })
         return dot / (normA * normB + 1e-9)
     }
 
