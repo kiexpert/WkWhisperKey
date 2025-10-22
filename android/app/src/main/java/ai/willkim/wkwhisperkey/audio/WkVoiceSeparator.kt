@@ -3,12 +3,13 @@ package ai.willkim.wkwhisperkey.audio
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v2.1
- * 짧은 파장 기반 위상 정합 화자 분리기
+ * WkVoiceSeparator v2.2
+ *  - 짧은 파장 기반 위상 정합 화자 분리기
  *  - λ <= 0.2 m 핵심밴드, 0.2~1.0 m 보조밴드
- *  - 연립 일치 검증(>=3개 핵심밴드)
+ *  - 연립 일치 검증 (≥3 핵심밴드)
  *  - Δindex <= 0.2 m 한계
- *  - 거리 계산 정밀도 개선 (mm 단위)
+ *  - 거리 계산 정밀도 (mm)
+ *  - 평균값 절반 차감으로 왜곡 최소화
  */
 
 data class VoiceKey(
@@ -23,7 +24,7 @@ data class SpeakerSignal(
     val samples: DoubleArray,
     val energy: Double,
     val deltaIndex: Int,
-    val distance: Double    // meter 단위 (소수점 3자리 이상 정밀도)
+    val distance: Double
 )
 
 class WkVoiceSeparator(
@@ -34,7 +35,7 @@ class WkVoiceSeparator(
     private val lambdaCoreMax = 0.2
     private val lambdaAssistMax = 1.0
     private val deltaIndexMax =
-        max(1, floor((lambdaAssistMax / c) * sampleRate).toInt()) // 약 25샘플 ≈ 0.2m
+        max(1, floor((lambdaAssistMax / c) * sampleRate).toInt())   // ≈ 25 samples ≈ 0.2 m
 
     private var nextId = 1000
     private var activeKeys = mutableListOf<VoiceKey>()
@@ -48,7 +49,7 @@ class WkVoiceSeparator(
         return preSpk
     }
 
-    // -------------------- 전처리 --------------------
+    // ---------------- 전처리 ----------------
     private fun preprocessByVoiceKeys(
         keys: List<VoiceKey>, Lsrc: DoubleArray, Rsrc: DoubleArray
     ): Triple<List<SpeakerSignal>, DoubleArray, DoubleArray> {
@@ -60,20 +61,20 @@ class WkVoiceSeparator(
         for (key in keys.sortedByDescending { it.energy }) {
             val d = key.deltaIndex
             val spk = DoubleArray(Lsrc.size)
+
             for (i in residualL.indices) {
                 val j = i - d
                 val r = if (j in residualR.indices) residualR[j] else 0.0
                 val l = residualL[i]
-                val s = 0.5 * (l + r)
+                val s = 0.5 * (l + r)          // delay-and-sum 추정치
                 spk[i] = s
-                residualL[i] = l - s
-                if (j in residualR.indices) residualR[j] = r - s
+                residualL[i] = l - s * 0.5     // 절반만 차감
+                if (j in residualR.indices) residualR[j] = r - s * 0.5
             }
 
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / 32768.0 + 1e-9) + 120.0
 
-            // --- 거리 계산 (mm 정밀도) ---
             val rawDist = abs(d).toDouble() * c / sampleRate.toDouble()
             val dist = if (rawDist < 0.005) 0.005 else rawDist  // 최소 5 mm 클램프
 
@@ -83,7 +84,7 @@ class WkVoiceSeparator(
         return Triple(result, residualL, residualR)
     }
 
-    // -------------------- 후처리 --------------------
+    // ---------------- 후처리 ----------------
     private fun postprocessResidual(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
         val N = Lres.size
         val fftL = fft(Lres)
@@ -130,7 +131,7 @@ class WkVoiceSeparator(
         return newKeys
     }
 
-    // -------------------- 키 병합 --------------------
+    // ---------------- 키 병합 ----------------
     private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): MutableList<VoiceKey> {
         val merged = mutableListOf<VoiceKey>()
         merged += old
@@ -144,7 +145,7 @@ class WkVoiceSeparator(
         return merged.toMutableList()
     }
 
-    // -------------------- FFT --------------------
+    // ---------------- FFT ----------------
     private fun fft(x: DoubleArray): Array<Complex> {
         val N = x.size
         if (N <= 1) return arrayOf(Complex(x[0], 0.0))
