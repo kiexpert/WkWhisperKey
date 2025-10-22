@@ -80,21 +80,23 @@ class WkSpeakerMapView @JvmOverloads constructor(
             val alpha = (min(1.0, spk.energy / 80.0) * 255).toInt().coerceIn(80, 255)
             circlePaint.color = color
             circlePaint.alpha = alpha
-
+        
             val distM = spk.distance
             val d = distM.toFloat() * scale
             val angle = ((spk.deltaIndex.coerceIn(-100,100) / 100f) * 60f)
             val rad = Math.toRadians(angle.toDouble())
-
+        
             val x = cx + sin(rad).toFloat() * d
             val y = baseY + cos(rad).toFloat() * d * 2f
-
+        
             canvas.drawCircle(x, y, 20f, circlePaint)
-
-            val txt = String.format("%.1fm", distM)
+        
+            // ---- 거리 표시: mm 단위 ----
+            val distMm = distM * 1000.0
+            val txt = String.format("%.1fmm", distMm)
             textPaint.color = color
             textPaint.alpha = 230
-            canvas.drawText(txt, x - 30f, y + 40f, textPaint)
+            canvas.drawText(txt, x - 40f, y + 40f, textPaint)
         }
     }
 }
