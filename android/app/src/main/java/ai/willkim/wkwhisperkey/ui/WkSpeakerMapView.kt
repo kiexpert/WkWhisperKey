@@ -15,14 +15,13 @@ class WkSpeakerMapView @JvmOverloads constructor(
     var speakers: List<SpeakerSignal> = emptyList()
     var allVoiceKeys: List<VoiceKey> = emptyList()
 
-    private val micPaint = Paint().apply {
+    private val micPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.LTGRAY
         style = Paint.Style.FILL
     }
-    private val textPaint = Paint().apply {
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.DKGRAY
         textSize = 32f
-        isAntiAlias = true
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -52,11 +51,12 @@ class WkSpeakerMapView @JvmOverloads constructor(
         canvas.drawCircle(cx + micOffset, baseY, 20f, micPaint)
         canvas.drawText("R", cx + micOffset - 12f, baseY + 60f, textPaint)
 
-        // --- 거리 기반 정규화 ---
-        val maxDist = (speakers.maxOfOrNull { it.distance } ?: 0.1).coerceAtLeast(0.05)
-        val scale = (h * 0.6f / maxDist.toFloat())
+        // --- 거리 정규화: 최대 화자 거리 ≈ 500px ---
+        val maxDistMm = speakers.maxOfOrNull { it.distance } ?: 1.0
+        val targetMaxPx = 500f
+        val scale = (targetMaxPx / maxDistMm).toFloat().coerceAtLeast(0.1f)
 
-        // --- 발성키 점 ---
+        // --- 모든 발성키 점 ---
         for ((i, key) in allVoiceKeys.withIndex()) {
             val colorIdx = i % colors.size
             val baseColor = colors[colorIdx]
@@ -64,9 +64,9 @@ class WkSpeakerMapView @JvmOverloads constructor(
             dotPaint.color = baseColor
             dotPaint.alpha = alpha
 
-            val distM = abs(key.deltaIndex) / 44100.0 * 343.0
-            val d = distM.toFloat() * scale
-            val angle = ((key.deltaIndex.coerceIn(-100,100) / 100f) * 60f)
+            val distMm = abs(key.deltaIndex) / 44100.0 * 343000.0 // mm
+            val d = distMm.toFloat() * scale
+            val angle = (key.deltaIndex.coerceIn(-100,100) / 100f) * 60f
             val rad = Math.toRadians(angle.toDouble())
 
             val x = cx + sin(rad).toFloat() * d
@@ -74,29 +74,27 @@ class WkSpeakerMapView @JvmOverloads constructor(
             canvas.drawCircle(x, y, 8f, dotPaint)
         }
 
-        // --- 화자 원 ---
+        // --- 대표 화자 ---
         for ((idx, spk) in speakers.take(8).withIndex()) {
             val color = colors[idx % colors.size]
             val alpha = (min(1.0, spk.energy / 80.0) * 255).toInt().coerceIn(80, 255)
             circlePaint.color = color
             circlePaint.alpha = alpha
-        
-            val distM = spk.distance
-            val d = distM.toFloat() * scale
-            val angle = ((spk.deltaIndex.coerceIn(-100,100) / 100f) * 60f)
+
+            val distMm = spk.distance
+            val d = distMm.toFloat() * scale
+            val angle = (spk.deltaIndex.coerceIn(-100,100) / 100f) * 60f
             val rad = Math.toRadians(angle.toDouble())
-        
+
             val x = cx + sin(rad).toFloat() * d
             val y = baseY + cos(rad).toFloat() * d * 2f
-        
             canvas.drawCircle(x, y, 20f, circlePaint)
-        
-            // ---- 거리 표시: mm 단위 ----
-            val distMm = distM * 1000.0
+
+            // 거리 텍스트
             val txt = String.format("%.1fmm", distMm)
             textPaint.color = color
             textPaint.alpha = 230
-            canvas.drawText(txt, x - 40f, y + 40f, textPaint)
+            canvas.drawText(txt, x - 45f, y + 40f, textPaint)
         }
     }
 }
