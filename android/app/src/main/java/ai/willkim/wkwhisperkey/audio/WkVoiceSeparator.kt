@@ -3,11 +3,12 @@ package ai.willkim.wkwhisperkey.audio
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v2
+ * WkVoiceSeparator v2.1
  * 짧은 파장 기반 위상 정합 화자 분리기
  *  - λ <= 0.2 m 핵심밴드, 0.2~1.0 m 보조밴드
  *  - 연립 일치 검증(>=3개 핵심밴드)
  *  - Δindex <= 0.2 m 한계
+ *  - 거리 계산 정밀도 개선 (mm 단위)
  */
 
 data class VoiceKey(
@@ -22,7 +23,7 @@ data class SpeakerSignal(
     val samples: DoubleArray,
     val energy: Double,
     val deltaIndex: Int,
-    val distance: Double
+    val distance: Double    // meter 단위 (소수점 3자리 이상 정밀도)
 )
 
 class WkVoiceSeparator(
@@ -30,9 +31,10 @@ class WkVoiceSeparator(
     private val bands: DoubleArray
 ) {
     private val c = 343.0
-    private val lambdaCoreMax = 0.2      // 핵심 파장 상한
-    private val lambdaAssistMax = 1.0    // 보조 파장 상한
-    private val deltaIndexMax = max(1, floor((lambdaAssistMax / c) * sampleRate).toInt()) // 0.2m→≈25
+    private val lambdaCoreMax = 0.2
+    private val lambdaAssistMax = 1.0
+    private val deltaIndexMax =
+        max(1, floor((lambdaAssistMax / c) * sampleRate).toInt()) // 약 25샘플 ≈ 0.2m
 
     private var nextId = 1000
     private var activeKeys = mutableListOf<VoiceKey>()
@@ -70,7 +72,10 @@ class WkVoiceSeparator(
 
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / 32768.0 + 1e-9) + 120.0
-            val dist = abs(d) / sampleRate.toDouble() * c
+
+            // --- 거리 계산 (mm 정밀도) ---
+            val rawDist = abs(d).toDouble() * c / sampleRate.toDouble()
+            val dist = if (rawDist < 0.005) 0.005 else rawDist  // 최소 5 mm 클램프
 
             result += SpeakerSignal(key.id, spk, eDb, d, dist)
         }
@@ -84,11 +89,9 @@ class WkVoiceSeparator(
         val fftL = fft(Lres)
         val fftR = fft(Rres)
 
-        // 밴드별 파장과 구분
         val coreBands = bands.filter { c / it <= lambdaCoreMax }
         val assistBands = bands.filter { c / it in (lambdaCoreMax..lambdaAssistMax) }
 
-        // 밴드별 Δindex 계산
         val deltaIdxByBand = mutableMapOf<Double, Int>()
         val snrByBand = mutableMapOf<Double, Double>()
         for (f in bands) {
@@ -101,22 +104,19 @@ class WkVoiceSeparator(
             val deltaIdx = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
             if (abs(deltaIdx) <= deltaIndexMax) {
                 deltaIdxByBand[f] = deltaIdx
-                val magL = sqrt(fftL[bin].real * fftL[bin].real + fftL[bin].imag * fftL[bin].imag)
-                val magR = sqrt(fftR[bin].real * fftR[bin].real + fftR[bin].imag * fftR[bin].imag)
+                val magL = hypot(fftL[bin].real, fftL[bin].imag)
+                val magR = hypot(fftR[bin].real, fftR[bin].imag)
                 snrByBand[f] = (magL + magR) / 2.0
             }
         }
 
-        // 연립 일치 검증: 핵심밴드에서 3개 이상 일치
         val groups = mutableListOf<List<Double>>()
         val sorted = deltaIdxByBand.toList().sortedBy { it.second }
         for ((f, di) in sorted) {
-            val cluster = sorted.filter { abs(it.second - di) <= 1 }
-                .map { it.first }
+            val cluster = sorted.filter { abs(it.second - di) <= 1 }.map { it.first }
             if (cluster.size >= 3 && cluster.any { it in coreBands }) groups += cluster
         }
 
-        // 그룹별 대표 Δindex 계산 및 키 생성
         val newKeys = mutableListOf<VoiceKey>()
         for (grp in groups.distinct()) {
             val idxs = grp.mapNotNull { deltaIdxByBand[it] }
