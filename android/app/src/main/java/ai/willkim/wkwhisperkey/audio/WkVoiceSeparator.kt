@@ -36,6 +36,7 @@ class WkVoiceSeparator(
 
     private var nextId = 1000
     private var activeKeys = mutableListOf<VoiceKey>()
+    fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
 
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
         val pre = activeKeys.toList()
