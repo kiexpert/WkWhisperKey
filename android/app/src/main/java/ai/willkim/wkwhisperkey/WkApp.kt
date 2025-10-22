@@ -22,13 +22,14 @@ class WkApp : Application() {
         lateinit var instance: WkApp
             private set
         val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        private const val BEACON_DURATION_MS = 100L
+        private const val BEACON_INTERVAL_MS = 1000L
+        private const val SAMPLE_RATE = 44100
     }
 
     private var audioTrack: AudioTrack? = null
     private val beaconBands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
-    private const val BEACON_DURATION_MS = 100L
-    private const val BEACON_INTERVAL_MS = 1000L
-    private const val SAMPLE_RATE = 44100
 
     override fun onCreate() {
         super.onCreate()
@@ -97,6 +98,7 @@ class WkApp : Application() {
             }
 
             // 송출
+            audioTrack?.playbackRate = SAMPLE_RATE
             audioTrack?.write(buffer, 0, buffer.size)
             WkLog.i("Beacon", "Root beacon emitted (${amplitude * 100}%)")
 
