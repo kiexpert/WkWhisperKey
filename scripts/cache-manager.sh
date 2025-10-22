@@ -31,22 +31,18 @@ android/app/build/intermediates
 android/app/.cxx"
 fi
 
-# 🔍 현재 브랜치명 추출 (fallback 포함)
-BRANCH_NAME="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')}"
-echo "🌿 Current branch: $BRANCH_NAME"
-
 # 🔊 경로 출력 (멀티라인)
 echo "cache_path<<EOF" >> "$GITHUB_OUTPUT"
 echo "$CACHE_PATHS" >> "$GITHUB_OUTPUT"
 echo "EOF" >> "$GITHUB_OUTPUT"
 
-echo "♻️  ${ACTION^} ${TYPE} cache for prefix '${PREFIX}-${BRANCH_NAME}-'"
+echo "♻️  ${ACTION^} ${TYPE} cache for prefix '${PREFIX}-'"
 
 # ────────────────────────────────────────────────
-# 🔍 2. 최신 캐시 검색 (브랜치별)
+# 🔍 2. 최신 캐시 검색
 # ────────────────────────────────────────────────
 CACHE_INFO=$(gh cache list --limit 10 --order desc --json id,key,sizeInBytes,createdAt 2>/dev/null \
-  | jq -r ".[] | select(.key|startswith(\"${PREFIX}-${BRANCH_NAME}-\")) | \"\(.key)|\(.id)|\(.sizeInBytes)|\(.createdAt)\"" \
+  | jq -r ".[] | select(.key|startswith(\"${PREFIX}-\")) | \"\(.key)|\(.id)|\(.sizeInBytes)|\(.createdAt)\"" \
   | head -n 1 || true)
 
 LATEST_KEY=""
@@ -55,7 +51,7 @@ if [ -n "$CACHE_INFO" ]; then
   SIZE_MB=$(awk "BEGIN {printf \"%.1f\", ${LATEST_SIZE}/1048576}")
   echo "📦  Found cache: ${LATEST_KEY} (${SIZE_MB} MB, ${LATEST_TIME})"
 else
-  echo "⚠️  No cache found for ${PREFIX}-${BRANCH_NAME}"
+  echo "⚠️  No cache found for ${PREFIX}"
 fi
 echo "restore_key=${LATEST_KEY}" >> "$GITHUB_OUTPUT"
 
@@ -81,9 +77,10 @@ fi
 # 💾 5. 저장 모드
 # ────────────────────────────────────────────────
 echo "🔍 Calculating hash for ${TYPE}..."
-NEW_HASH=$(calc_hash "$CACHE_PATHS" || echo "0")
-NEW_KEY="${PREFIX}-${BRANCH_NAME}-${NEW_HASH:0:12}"
-OLD_HASH="${LATEST_KEY#${PREFIX}-${BRANCH_NAME}-}"
+BRANCH_NAME="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')}"
+NEW_HASH=$( { echo "$BRANCH_NAME"; calc_hash "$CACHE_PATHS"; } | sha256sum | cut -d ' ' -f1 )
+NEW_KEY="${PREFIX}-${NEW_HASH:0:12}"
+OLD_HASH="${LATEST_KEY#${PREFIX}-}"
 
 if [ "$OLD_HASH" = "${NEW_HASH:0:12}" ] && [ -n "$OLD_HASH" ]; then
   echo "✅ No cache changes for ${TYPE}"
@@ -101,10 +98,10 @@ if [ "$TYPE" = "core" ]; then
   chmod -R 755 "$HOME/.android-sdk" || true
 fi
 
-# 오래된 캐시 정리 (같은 브랜치 내에서만)
+# 오래된 캐시 정리
 if [ -n "$LATEST_KEY" ]; then
   gh cache list --json id,key 2>/dev/null | jq -r '.[] | "\(.id) \(.key)"' | while read -r ID KEY; do
-    if [[ "$KEY" == ${PREFIX}-${BRANCH_NAME}-* && "$KEY" != "$LATEST_KEY" ]]; then
+    if [[ "$KEY" == ${PREFIX}-* && "$KEY" != "$LATEST_KEY" ]]; then
       echo "🗑  Deleting old cache $KEY"
       gh cache delete "$ID" || true
     fi
