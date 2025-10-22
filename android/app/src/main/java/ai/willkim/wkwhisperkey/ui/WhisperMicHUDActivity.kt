@@ -112,7 +112,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             infoText.text = sb.toString()
 
             // 화자 및 발성키 모두 지도에 전달
-            speakerMap.updateSpeakers(sorted, separator.activeKeys)
+            speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
 
         } catch (e: Exception) {
             infoText.text = "분석 오류: ${e.message}"
