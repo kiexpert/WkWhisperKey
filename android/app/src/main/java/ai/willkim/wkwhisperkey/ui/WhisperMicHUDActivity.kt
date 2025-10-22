@@ -48,7 +48,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         root.addView(title)
 
         root.addView(speakerMap, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 500
+            LinearLayout.LayoutParams.MATCH_PARENT, 550
         ))
 
         infoText.textSize = 13f
