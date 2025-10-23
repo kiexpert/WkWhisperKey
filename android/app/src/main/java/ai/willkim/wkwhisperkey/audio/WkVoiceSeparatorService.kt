@@ -24,7 +24,7 @@ class WkVoiceSeparatorService : Service() {
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val separator: WkVoiceSeparator = WkVoiceSeparator(
+    private val separator = WkVoiceSeparator(
         sampleRate = 44100,
         bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
     )
