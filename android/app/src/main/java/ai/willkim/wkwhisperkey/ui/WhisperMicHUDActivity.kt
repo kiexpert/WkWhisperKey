@@ -58,7 +58,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         WkSafetyMonitor.initialize(this)
         // separator = WkVoiceSeparator(sampleRate, bands)
-        separator = WkVoiceSeparatorService.getInstance().getSeparator()
+        separator = WkVoiceSeparatorService.getInstance()!!.getSeparator()
         ensureMicPermission()
 
         micManager = WkMicArrayManager(
