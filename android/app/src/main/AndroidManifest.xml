@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="ai.willkim.wkwhisperkey">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- ✅ 필수 권한 -->
+    <!-- 🎧 필수 권한 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- ✅ Android 13 이하: 외부 저장소 접근 -->
+    <!-- 🗂️ Android 13 이하 외부 저장소 접근 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
@@ -16,12 +15,12 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- ✅ Android 13+ (Scoped Storage / SAF 호환) -->
+    <!-- 🗂️ Android 13+ Scoped Storage -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
-    <!-- ✅ Android 14+: SAF 기반 파일 액세스 -->
+    <!-- 📂 SAF 기반 파일 액세스 -->
     <queries>
         <intent>
             <action android:name="android.intent.action.OPEN_DOCUMENT" />
@@ -45,7 +44,8 @@
         <activity
             android:name=".ui.WhisperMicHUDActivity"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -56,20 +56,33 @@
         <activity
             android:name=".ui.WkTrainerHUDActivity"
             android:exported="true"
-            android:label="Trainer HUD" />
+            android:label="Trainer HUD"
+            android:configChanges="orientation|screenSize" />
 
         <!-- 📈 Analytics View -->
         <activity
             android:name=".ui.WkTrainerAnalyticsActivity"
             android:exported="true"
-            android:label="Trainer Analytics" />
+            android:label="Trainer Analytics"
+            android:configChanges="orientation|screenSize" />
 
-        <!-- Whisper JNI 라이브러리 정보 -->
+        <!-- 🔊 실시간 오디오 서비스 -->
+        <service
+            android:name=".audio.WkVoiceSeparatorService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
+            android:name=".audio.WkRootBeaconService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Whisper JNI 라이브러리 -->
         <meta-data
             android:name="whisper.native.lib"
             android:value="libwhisper.so" />
 
-        <!-- Whisper 로그 저장 위치 -->
+        <!-- Whisper 로그 경로 -->
         <meta-data
             android:name="whisper.logs.path"
             android:value="/sdcard/WkWhisperLogs" />
