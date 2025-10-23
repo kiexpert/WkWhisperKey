@@ -10,9 +10,9 @@ import kotlin.math.*
  * WkVoiceSeparator v5.8
  * -------------------------------------------------------
  * - Fold5 모드 자동감지 (세로/가로/펼침)
- * - 반파장 패딩 기반 위상 안정화
+ * - 마이크 거리 자동추정 및 위상 기반 거리 해석
+ * - ±600 샘플 패딩 (20cm 거리 대응)
  * - 연립방정식(2~3밴드 일치) 기반 물리거리 확정
- * - FFT 캐시 토글 지원 (기본 false)
  * - 1개 확정된 발성키만 생성 (or 없음)
  * - 밴드별 노이즈 추적(EMA) 및 기존키 감쇠/드랍
  */
@@ -39,6 +39,7 @@ class WkVoiceSeparator(
     companion object {
         private const val SPEED_OF_SOUND = 343.0
         private const val MIC_DISTANCE_MAX_MM = 200.0
+        private const val PAD_SAMPLES = 600      // ±패딩샘플
 
         private const val RESIDUAL_ATTENUATION = 0.6
         private const val ENERGY_SIM_THRESHOLD = 0.85
@@ -58,9 +59,6 @@ class WkVoiceSeparator(
 
         private const val TOP_BANDS_FOR_VOTE = 6
         private const val EXCLUDE_LOW_FREQ = 1
-
-        // ✅ FFT 캐시 토글
-        private const val USE_FFT_CACHE = false
 
         fun estimateMicDistanceMm(): Double {
             val context = WkApp.instance.applicationContext
@@ -96,11 +94,6 @@ class WkVoiceSeparator(
     private val energyByBand = DoubleArray(bands.size)
     private val snrByBand = DoubleArray(bands.size)
 
-    // FFT 캐시
-    private var lastFftL: Array<Complex>? = null
-    private var lastFftR: Array<Complex>? = null
-    private var lastFrameHash = 0L
-
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
     fun getNoiseBandsCopy(): DoubleArray = noiseFloor.copyOf()
 
@@ -118,14 +111,19 @@ class WkVoiceSeparator(
     private fun preprocessByVoiceKeys(
         keys: List<VoiceKey>, Lsrc: DoubleArray, Rsrc: DoubleArray
     ): Triple<List<SpeakerSignal>, DoubleArray, DoubleArray> {
-        val residualL = Lsrc.copyOf()
-        val residualR = Rsrc.copyOf()
+        val N = Lsrc.size
+        val Npad = N + PAD_SAMPLES * 2
+        val residualL = DoubleArray(Npad)
+        val residualR = DoubleArray(Npad)
+        System.arraycopy(Lsrc, 0, residualL, PAD_SAMPLES, N)
+        System.arraycopy(Rsrc, 0, residualR, PAD_SAMPLES, N)
+
         val result = mutableListOf<SpeakerSignal>()
 
         for (key in keys.sortedByDescending { it.energy }) {
             val d = key.deltaIndex
-            val spk = DoubleArray(Lsrc.size)
-            for (i in residualL.indices) {
+            val spk = DoubleArray(Npad)
+            for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
                 val j = i - d
                 val r = if (j in residualR.indices) residualR[j] else 0.0
                 val l = residualL[i]
@@ -134,67 +132,47 @@ class WkVoiceSeparator(
                 residualL[i] = l - s * RESIDUAL_ATTENUATION
                 if (j in residualR.indices) residualR[j] = r - s * RESIDUAL_ATTENUATION
             }
+
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
             result += SpeakerSignal(key.id, listOf(key), eDb, d, key.distanceMm)
         }
-        return Triple(result, residualL, residualR)
+
+        // 중앙 영역만 반환
+        val coreL = residualL.copyOfRange(PAD_SAMPLES, PAD_SAMPLES + N)
+        val coreR = residualR.copyOfRange(PAD_SAMPLES, PAD_SAMPLES + N)
+        return Triple(result, coreL, coreR)
     }
 
     // ------------------------------------------------------------
-    // ✅ 반파장 패딩 + FFT 캐시 토글형
-    // ------------------------------------------------------------
-    private fun detectVoiceKey(Lsrc: DoubleArray, Rsrc: DoubleArray): VoiceKey? {
-        val N = Lsrc.size
+    private fun detectVoiceKey(Lres: DoubleArray, Rres: DoubleArray): VoiceKey? {
+        val N = Lres.size
+        val Npad = N + PAD_SAMPLES * 2
+        val paddedL = DoubleArray(Npad)
+        val paddedR = DoubleArray(Npad)
+        System.arraycopy(Lres, 0, paddedL, PAD_SAMPLES, N)
+        System.arraycopy(Rres, 0, paddedR, PAD_SAMPLES, N)
+
+        val fftL = fft(paddedL)
+        val fftR = fft(paddedR)
         val micDistMm = estimateMicDistanceMm()
 
-        val minFreq = bands.minOrNull() ?: 150.0
-        val halfLambdaSamples = (sampleRate / (2 * minFreq)).roundToInt()
-        val ext = halfLambdaSamples.coerceAtMost(N / 4)
-        val paddedL = DoubleArray(N + 2 * ext)
-        val paddedR = DoubleArray(N + 2 * ext)
-        System.arraycopy(Lsrc, 0, paddedL, ext, N)
-        System.arraycopy(Rsrc, 0, paddedR, ext, N)
-
-        var hash = 1L
-        if (USE_FFT_CACHE) {
-            for (i in 0 until 64 step 8) {
-                val idx = (i * N / 64).coerceIn(0, N - 1)
-                hash = 31 * hash + (Lsrc[idx].toLong() xor Rsrc[idx].toLong())
-            }
-        }
-
-        val fftL: Array<Complex>
-        val fftR: Array<Complex>
-
-        if (USE_FFT_CACHE && hash == lastFrameHash && lastFftL != null && lastFftR != null) {
-            fftL = lastFftL!!
-            fftR = lastFftR!!
-        } else {
-            fftL = fft(paddedL)
-            fftR = fft(paddedR)
-            if (USE_FFT_CACHE) {
-                lastFftL = fftL
-                lastFftR = fftR
-                lastFrameHash = hash
-            }
-        }
-
+        // 밴드별 위상 분석
         for (i in bands.indices) {
             val f = bands[i]
-            val bin = (f / (sampleRate / fftL.size.toDouble())).roundToInt().coerceIn(0, fftL.size - 1)
+            val bin = (f / (sampleRate / Npad.toDouble())).roundToInt().coerceIn(0, Npad - 1)
+            val magL = hypot(fftL[bin].real, fftL[bin].imag)
+            val magR = hypot(fftR[bin].real, fftR[bin].imag)
+            energyByBand[i] = (magL + magR) * 0.5
             val phL = atan2(fftL[bin].imag, fftL[bin].real)
             val phR = atan2(fftR[bin].imag, fftR[bin].real)
             var dPhi = phR - phL
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
             phaseDiff[i] = dPhi
-
-            val magL = hypot(fftL[bin].real, fftL[bin].imag)
-            val magR = hypot(fftR[bin].real, fftR[bin].imag)
-            energyByBand[i] = (magL + magR) * 0.5
             snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
-            noiseFloor[i] = (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
+            noiseFloor[i] =
+                (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
         }
 
         val passWhisper =
@@ -217,7 +195,8 @@ class WkVoiceSeparator(
         freqs: DoubleArray,
         energy: DoubleArray
     ): Pair<Int, Double> {
-        val maxDelaySamples = (MIC_DISTANCE_MAX_MM / 1000.0 / SPEED_OF_SOUND * sampleRate).roundToInt()
+        val maxDelaySamples =
+            (MIC_DISTANCE_MAX_MM / 1000.0 / SPEED_OF_SOUND * sampleRate).roundToInt()
         val order = (freqs.indices).sortedByDescending { energy[it] }
         val voteBands = order.drop(EXCLUDE_LOW_FREQ).take(TOP_BANDS_FOR_VOTE)
 
@@ -283,6 +262,7 @@ class WkVoiceSeparator(
         return merged.sortedByDescending { it.energy }
     }
 
+    // ------------------------------------------------------------
     private fun clusterByEnergyPattern(keys: List<VoiceKey>): List<SpeakerSignal> {
         val groups = mutableListOf<MutableList<VoiceKey>>()
         for (k in keys) {
@@ -314,6 +294,7 @@ class WkVoiceSeparator(
         return dot / (normA * normB + ENERGY_MIN_THRESHOLD)
     }
 
+    // ------------------------------------------------------------
     private fun fft(x: DoubleArray): Array<Complex> {
         val N = x.size
         if (N <= 1) return arrayOf(Complex(x[0], 0.0))
