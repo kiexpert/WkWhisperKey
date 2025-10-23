@@ -9,11 +9,12 @@ import ai.willkim.wkwhisperkey.audio.VoiceKey
 import kotlin.math.*
 
 /**
- * WkSpeakerMapView v2.2
+ * WkSpeakerMapView v2.3
  * -------------------------------------------------------------
  * - 분리기 출력(거리·델타인덱스·에너지)을 2D 좌표로 매핑
  * - 마이크 거리 및 반경(500mm) 기준 시각적 비율 유지
  * - 에너지 강도에 따라 중심부 곡률 자동 보정
+ * - 강한 에너지는 중심, 약한 신호는 외곽 포물선상으로 배치
  */
 
 class WkSpeakerMapView @JvmOverloads constructor(
@@ -55,18 +56,20 @@ class WkSpeakerMapView @JvmOverloads constructor(
         this.speakers = speakers
         this.allVoiceKeys = voiceKeys
 
-        // 🔹 UI 좌표 매핑 수행
+        // 🔹 UI 좌표 매핑 수행 (에너지 기반 포물선 곡면)
         if (voiceKeys.isNotEmpty()) {
             val eMax = voiceKeys.maxOf { it.energy }
             val eMin = voiceKeys.minOf { it.energy }
             val eRange = (eMax - eMin).coerceAtLeast(1e-9)
+
             for (key in allVoiceKeys) {
                 val eNorm = ((key.energy - eMin) / eRange).coerceIn(0.0, 1.0)
                 val dNorm = (key.distanceMm / MAX_DRAW_RADIUS_MM).coerceIn(0.0, 1.0)
+                // 포물선형 거리 보정: 에너지가 작을수록 곡선 바깥으로
                 val curvedR = (dNorm * dNorm) * MAX_DRAW_RADIUS_MM * (1.0 - eNorm) + eNorm * 20.0
                 val theta = (key.deltaIndex / 600.0).coerceIn(-1.0, 1.0) * (Math.PI / 2)
-                key.energyPosX = 250.0 + cos(theta) * curvedR
-                key.energyPosY = 250.0 + sin(theta) * curvedR
+                key.energyPosX = 250.0 + sin(theta) * curvedR
+                key.energyPosY = 250.0 + cos(theta) * curvedR
             }
         }
 
@@ -97,8 +100,8 @@ class WkSpeakerMapView @JvmOverloads constructor(
             dotPaint.color = baseColor
             dotPaint.alpha = alpha
 
-            val x = cx + (key.energyPosX - 250).toFloat() * scale / 2f
-            val y = baseY + (key.energyPosY - 250).toFloat() * scale
+            val x = cx + (key.energyPosX - 250).toFloat() * scale * 0.8f
+            val y = baseY + (key.energyPosY - 250).toFloat() * scale * 0.8f
             canvas.drawCircle(x, y, 8f, dotPaint)
         }
 
