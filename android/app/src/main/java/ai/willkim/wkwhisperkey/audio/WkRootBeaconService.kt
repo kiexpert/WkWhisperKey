@@ -8,15 +8,15 @@ import kotlin.math.*
 
 /**
  * WkRootBeaconService
- * 백그라운드 루트 비콘 송출 서비스
- *
- * - AudioTrack 단일 인스턴스 유지
- * - 외부 RMS 입력값에 따라 자동 볼륨 보정
- * - 모든 액티비티에서 bind/unbind 가능
+ * --------------------------------------------------------
+ * 3단(좌·중·우) 8밴드 루트 비콘 송출 서비스
+ *  - 좌 0.00~0.07초 / 중 0.03~0.07초 / 우 0.03~0.10초
+ *  - AudioTrack 단일 인스턴스 유지 (Stereo)
+ *  - 외부 RMS에 따라 자동 볼륨 보정
+ *  - 0.1초 캐시 버퍼를 재사용하여 CPU 부하 최소화
  *
  * (C) 2025 Will Kim (kiexpert@kivilab.co.kr)
  */
-
 class WkRootBeaconService : Service() {
 
     private val binder = LocalBinder()
@@ -41,9 +41,6 @@ class WkRootBeaconService : Service() {
         fun getService(): WkRootBeaconService = this@WkRootBeaconService
     }
 
-    /**
-     * 외부 마이크 RMS 업데이트
-     */
     fun updateNoiseLevel(rms: Double) {
         emitter.updateNoiseRms(rms)
     }
@@ -51,9 +48,11 @@ class WkRootBeaconService : Service() {
 
 /**
  * WkRootBeaconEmitter
- * 8밴드 루트 신호 송출기
- *  - RMS 기반 음량 자동 조절
- *  - 1초 주기, 0.1초 버스트
+ * --------------------------------------------------------
+ *  - 8밴드 × 3단(좌·중·우) 멀티톤 비콘
+ *  - 좌우 스테레오 위상 이동 기반 공간 보정
+ *  - 사인파 연속성 유지(페이드 인/아웃 포함)
+ *  - 0.1초 버퍼 캐싱 후 1초 주기 송출
  */
 class WkRootBeaconEmitter(
     private val sampleRate: Int = 44100,
@@ -66,10 +65,12 @@ class WkRootBeaconEmitter(
     @Volatile private var running = false
     @Volatile private var lastRms = 0.002
 
+    private lateinit var triBeaconBuffer: ShortArray
+
     init {
         val bufSize = AudioTrack.getMinBufferSize(
             sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.CHANNEL_OUT_STEREO,
             AudioFormat.ENCODING_PCM_16BIT
         )
 
@@ -81,12 +82,14 @@ class WkRootBeaconEmitter(
             AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(sampleRate)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                 .build(),
             bufSize,
             AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE
         )
+
+        prepareTriMultiBeacon()
     }
 
     fun updateNoiseRms(rms: Double) {
@@ -105,32 +108,58 @@ class WkRootBeaconEmitter(
         audioTrack.stop()
     }
 
-    private fun loop() {
-        val dur = 0.1
-        val n = (sampleRate * dur).toInt()
-        val env = DoubleArray(n) { i ->
-            val t = i / n.toDouble()
-            when {
-                t < 0.1 -> t * 10
-                t > 0.9 -> (1 - t) * 10
-                else -> 1.0
+    /**
+     * 8밴드 × 좌·중·우 비콘을 0.1초 버퍼로 미리 합성
+     */
+    private fun prepareTriMultiBeacon() {
+        val totalSec = 0.10
+        val totalSamples = (sampleRate * totalSec).toInt()
+        val amp = 0.04
+
+        val L = DoubleArray(totalSamples)
+        val R = DoubleArray(totalSamples)
+
+        fun addTone(buf: DoubleArray, startSec: Double, durSec: Double, freq: Double) {
+            val start = (sampleRate * startSec).toInt()
+            val len = (sampleRate * durSec).toInt()
+            for (i in 0 until len) {
+                val t = (start + i).toDouble() / sampleRate
+                val env = 0.5 * (1 - cos(Math.PI * i / len)) // fade in/out
+                buf[start + i] += sin(2 * Math.PI * freq * t) * amp * env
             }
         }
 
-        val buf = ShortArray(n)
+        // 좌(0.00~0.07), 중(0.03~0.07), 우(0.03~0.10)
+        for (f in bands) {
+            addTone(L, 0.00, 0.07, f)
+            addTone(L, 0.03, 0.04, f)
+            addTone(R, 0.03, 0.04, f)
+            addTone(R, 0.03, 0.07, f)
+        }
+
+        triBeaconBuffer = ShortArray(totalSamples * 2)
+        for (i in 0 until totalSamples) {
+            triBeaconBuffer[i * 2] =
+                (L[i].coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+            triBeaconBuffer[i * 2 + 1] =
+                (R[i].coerceIn(-1.0, 1.0) * Short.MAX_VALUE).toInt().toShort()
+        }
+    }
+
+    /**
+     * 메인 루프 — 1초마다 캐시 버퍼 송출
+     */
+    private fun loop() {
         while (running) {
             val rms = lastRms
-            if (rms < 0.05) {
-                val amp = (32767.0 * (rms * 2.0)).coerceIn(800.0, 4000.0)
-                for (i in buf.indices) {
-                    val t = i / sampleRate.toDouble()
-                    var s = 0.0
-                    for (f in bands) s += sin(2 * Math.PI * f * t)
-                    buf[i] = (s / bands.size * env[i] * amp)
-                        .coerceIn(-32767.0, 32767.0).toInt().toShort()
-                }
-                audioTrack.write(buf, 0, buf.size)
+            val volScale = (rms * 2.0).coerceIn(0.02, 0.10)
+            val scaled = ShortArray(triBeaconBuffer.size)
+            for (i in triBeaconBuffer.indices) {
+                scaled[i] = (triBeaconBuffer[i] * volScale)
+                    .coerceIn(-32767.0, 32767.0).toInt().toShort()
             }
+
+            audioTrack.write(scaled, 0, scaled.size)
             Thread.sleep(1000)
         }
     }
