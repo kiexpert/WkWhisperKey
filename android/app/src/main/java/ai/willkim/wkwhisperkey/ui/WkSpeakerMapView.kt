@@ -9,29 +9,25 @@ import ai.willkim.wkwhisperkey.audio.VoiceKey
 import kotlin.math.*
 
 /**
- * WkSpeakerMapView v2.1
+ * WkSpeakerMapView v2.2
  * -------------------------------------------------------------
- * - 마이크 간 간격 및 화자 거리 모두 실제 거리(mm) 스케일로 정규화
- * - MIC_DISTANCE_MAX_MM(200mm) 기준 자동 스케일링
- * - 세로모드(20mm) / 가로모드(150mm) / 펼침(180mm) 대비 자동 축소
- * - 시각적으로 실제 공간 비례 유지
+ * - 분리기 출력(거리·델타인덱스·에너지)을 2D 좌표로 매핑
+ * - 마이크 거리 및 반경(500mm) 기준 시각적 비율 유지
+ * - 에너지 강도에 따라 중심부 곡률 자동 보정
  */
 
 class WkSpeakerMapView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    // ---- 실시간 업데이트 데이터 ----
     var speakers: List<SpeakerSignal> = emptyList()
     var allVoiceKeys: List<VoiceKey> = emptyList()
 
-    // ---- 상수 ----
-    private val MIC_DISTANCE_MAX_MM = 200f     // 최대 기준 거리 (mm)
-    private val CURRENT_MIC_DIST_MM = 20f      // TODO: Orientation 기반 자동 갱신
-    private val MAX_DRAW_RADIUS_MM = 500f      // 캔버스 내 최대 표현 거리 (mm)
-    private val DEG_SPREAD = 60.0              // 시각화 각도 범위
+    private val MIC_DISTANCE_MAX_MM = 200f
+    private val CURRENT_MIC_DIST_MM = 20f
+    private val MAX_DRAW_RADIUS_MM = 500f
+    private val DEG_SPREAD = 60.0
 
-    // ---- 스타일 ----
     private val micPaint = Paint().apply {
         color = Color.LTGRAY
         style = Paint.Style.FILL
@@ -49,16 +45,31 @@ class WkSpeakerMapView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    // ---- 색상 팔레트 ----
     private val colors = intArrayOf(
         Color.BLACK, Color.RED, Color.rgb(255,165,0), Color.YELLOW,
         Color.GREEN, Color.BLUE, Color.rgb(0,0,139), Color.rgb(138,43,226)
     )
 
-    // ---- 외부 호출 ----
+    // ----------------------------------------------------------
     fun updateSpeakers(speakers: List<SpeakerSignal>, voiceKeys: List<VoiceKey>) {
         this.speakers = speakers
         this.allVoiceKeys = voiceKeys
+
+        // 🔹 UI 좌표 매핑 수행
+        if (voiceKeys.isNotEmpty()) {
+            val eMax = voiceKeys.maxOf { it.energy }
+            val eMin = voiceKeys.minOf { it.energy }
+            val eRange = (eMax - eMin).coerceAtLeast(1e-9)
+            for (key in allVoiceKeys) {
+                val eNorm = ((key.energy - eMin) / eRange).coerceIn(0.0, 1.0)
+                val dNorm = (key.distanceMm / MAX_DRAW_RADIUS_MM).coerceIn(0.0, 1.0)
+                val curvedR = (dNorm * dNorm) * MAX_DRAW_RADIUS_MM * (1.0 - eNorm) + eNorm * 20.0
+                val theta = (key.deltaIndex / 600.0).coerceIn(-1.0, 1.0) * (Math.PI / 2)
+                key.energyPosX = 250.0 + cos(theta) * curvedR
+                key.energyPosY = 250.0 + sin(theta) * curvedR
+            }
+        }
+
         invalidate()
     }
 
@@ -69,20 +80,16 @@ class WkSpeakerMapView @JvmOverloads constructor(
         val h = height.toFloat()
         val cx = w / 2f
         val baseY = h * 0.15f
-
-        // --- 거리 스케일 계산 (절대 거리 기반) ---
         val scale = (h * 0.65f) / MAX_DRAW_RADIUS_MM
-
-        // --- 마이크 간격 동적 계산 ---
         val micOffset = (CURRENT_MIC_DIST_MM * scale) / 2f
 
-        // --- 마이크 표시 ---
+        // ---- 마이크 표시 ----
         canvas.drawCircle(cx - micOffset, baseY, 20f, micPaint)
         canvas.drawText("L", cx - micOffset - 12f, baseY + 60f, textPaint)
         canvas.drawCircle(cx + micOffset, baseY, 20f, micPaint)
         canvas.drawText("R", cx + micOffset - 12f, baseY + 60f, textPaint)
 
-        // --- 발성키 점 그리기 ---
+        // ---- 발성키 점 ----
         for ((i, key) in allVoiceKeys.withIndex()) {
             val colorIdx = i % colors.size
             val baseColor = colors[colorIdx]
@@ -90,15 +97,12 @@ class WkSpeakerMapView @JvmOverloads constructor(
             dotPaint.color = baseColor
             dotPaint.alpha = alpha
 
-            val d = key.distanceMm.toFloat().coerceAtMost(MAX_DRAW_RADIUS_MM) * scale
-            val angle = ((key.deltaIndex.coerceIn(-100, 100) / 100f) * DEG_SPREAD).toFloat()
-            val rad = Math.toRadians(angle.toDouble())
-            val x = cx + sin(rad).toFloat() * d
-            val y = baseY + cos(rad).toFloat() * d * 2f
+            val x = cx + (key.energyPosX - 250).toFloat() * scale / 2f
+            val y = baseY + (key.energyPosY - 250).toFloat() * scale
             canvas.drawCircle(x, y, 8f, dotPaint)
         }
 
-        // --- 화자 원 표시 ---
+        // ---- 화자 원 ----
         for ((idx, spk) in speakers.take(8).withIndex()) {
             val color = colors[idx % colors.size]
             val alpha = (min(1.0, spk.energy / 80.0) * 255).toInt().coerceIn(80, 255)
@@ -113,7 +117,6 @@ class WkSpeakerMapView @JvmOverloads constructor(
 
             canvas.drawCircle(x, y, 20f, circlePaint)
 
-            // ---- 거리 표시 (mm 단위) ----
             val txt = String.format("%.1fmm", spk.distance)
             textPaint.color = color
             textPaint.alpha = 230
