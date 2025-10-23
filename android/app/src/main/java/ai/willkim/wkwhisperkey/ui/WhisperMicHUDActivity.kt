@@ -1,6 +1,7 @@
 package ai.willkim.wkwhisperkey.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.os.*
@@ -19,7 +20,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private val separator = WkVoiceSeparatorShard.instance
     private val main = Handler(Looper.getMainLooper())
 
-    // ----- 분석 파라미터 -----
     private val sampleRate = 44100
     private val frameMs = 20
     private val N = (sampleRate * frameMs / 1000.0).roundToInt()
@@ -35,7 +35,10 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply {
+
+        // ---------- FrameLayout 루트 ----------
+        val root = FrameLayout(this)
+        val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
@@ -45,19 +48,35 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             textSize = 18f
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        root.addView(title)
+        mainLayout.addView(title)
 
-        root.addView(speakerMap, LinearLayout.LayoutParams(
+        mainLayout.addView(speakerMap, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 550
         ))
 
         infoText.textSize = 13f
         infoText.setTextColor(Color.WHITE)
-        root.addView(infoText)
+        mainLayout.addView(infoText)
+
+        root.addView(mainLayout)
+
+        // ---------- 프로파일러 오버레이 ----------
+        val profiler = WkProfilerView(this).apply {
+            setBackgroundColor(Color.argb(120, 0, 0, 0))
+            setPadding(8, 4, 8, 4)
+        }
+        root.addView(
+            profiler,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            )
+        )
+
         setContentView(root)
 
         WkSafetyMonitor.initialize(this)
-        //separator = WkVoiceSeparator(sampleRate, bands)
         ensureMicPermission()
 
         micManager = WkMicArrayManager(
@@ -98,7 +117,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         try {
             val speakers = separator.separate(L, R)
             val sorted = speakers.sortedByDescending { it.energy }.take(7)
-
             val sb = StringBuilder()
             sb.append("감지된 화자 수: ${speakers.size}\n")
             for ((i, s) in sorted.withIndex()) {
@@ -110,10 +128,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
                 )
             }
             infoText.text = sb.toString()
-
-            // 화자 및 발성키 모두 지도에 전달
             speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
-
         } catch (e: Exception) {
             infoText.text = "분석 오류: ${e.message}"
         }
@@ -135,5 +150,32 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         super.onDestroy()
         micManager.stopAll()
         WkSafetyMonitor.stop()
+    }
+
+    // ---------- 내부 프로파일러 ----------
+    class WkProfilerView(context: Context) : TextView(context), Choreographer.FrameCallback {
+        private var lastTime = System.nanoTime()
+        private var frameCount = 0
+
+        init {
+            textSize = 11f
+            setTextColor(Color.GREEN)
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+
+        override fun doFrame(frameTimeNanos: Long) {
+            frameCount++
+            val now = System.nanoTime()
+            if (now - lastTime > 1_000_000_000L) {
+                val fps = frameCount
+                val mem = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
+                val kb = mem / 1024
+                val threads = Thread.activeCount()
+                text = "FPS=$fps  MEM=${kb}KB  THR=$threads"
+                frameCount = 0
+                lastTime = now
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
     }
 }
