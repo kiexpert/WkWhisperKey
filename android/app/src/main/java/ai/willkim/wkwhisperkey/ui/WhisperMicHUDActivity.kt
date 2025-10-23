@@ -16,7 +16,7 @@ import kotlin.math.*
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private lateinit var separator: WkVoiceSeparator
+    private val separator = WkVoiceSeparatorShard.instance
     private val main = Handler(Looper.getMainLooper())
 
     // ----- 분석 파라미터 -----
@@ -57,7 +57,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         setContentView(root)
 
         WkSafetyMonitor.initialize(this)
-        separator = WkVoiceSeparator(sampleRate, bands)
+        //separator = WkVoiceSeparator(sampleRate, bands)
         ensureMicPermission()
 
         micManager = WkMicArrayManager(
