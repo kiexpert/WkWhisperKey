@@ -42,7 +42,7 @@ class WkVoiceSeparator(
         private const val MIC_DISTANCE_MAX_MM = 200.0
         private const val PAD_SAMPLES = 600      // ±패딩샘플
 
-        private const val RESIDUAL_ATTENUATION = 0.6
+        private const val RESIDUAL_ATTENUATION = 0.625
         private const val ENERGY_SIM_THRESHOLD = 0.85
         private const val MAX_CLUSTER_GAP = 3
         private const val ENERGY_MIN_THRESHOLD = 1e-9
