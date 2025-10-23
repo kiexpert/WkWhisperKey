@@ -3,17 +3,13 @@ package ai.willkim.wkwhisperkey.audio
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v5.2
+ * WkVoiceSeparator v5.3
  * -------------------------------------------------------
- * - 각 밴드 위상차(ΔΦ) 기반 발성키(VoiceKey) 생성
- * - 8밴드 정규화 에너지비율로 화자 클러스터링
- * - 마이크 간 거리 자동 추정(Fold5: 20 mm 세로 / 150 mm 가로 / 180 mm 펼침)
- * - 모든 상수값 명시 + 후속 보정 TODO 포함
+ * - 각 밴드 위상차(ΔΦ) 기반 발성키 생성
+ * - 8밴드 에너지비율 기반 화자 클러스터링
+ * - Fold5 모드별 마이크 간 거리 자동 추정
+ * - 모든 주요 상수 명시 + 주석에 물리적 근거 명기
  */
-
-// ------------------------------------------------------------
-// 데이터 구조
-// ------------------------------------------------------------
 data class VoiceKey(
     val id: Int,
     val freq: Double,
@@ -27,12 +23,9 @@ data class SpeakerSignal(
     val keys: List<VoiceKey>,
     val energy: Double,
     val deltaIndex: Int,
-    val distance: Double // mm
+    val distance: Double // mm 단위
 )
 
-// ------------------------------------------------------------
-// 본체
-// ------------------------------------------------------------
 class WkVoiceSeparator(
     private val sampleRate: Int,
     private val bands: DoubleArray
@@ -40,7 +33,7 @@ class WkVoiceSeparator(
     companion object {
         // --- 물리 상수 ---
         private const val SPEED_OF_SOUND = 343.0        // m/s
-        private const val MIC_DISTANCE_MAX_MM = 200.0   // mm (인간 고막 간격 기준 한계)
+        private const val MIC_DISTANCE_MAX_MM = 200.0   // mm (인간 고막 기준 한계)
 
         // --- 분석 파라미터 ---
         private const val RESIDUAL_ATTENUATION = 0.6
@@ -52,6 +45,20 @@ class WkVoiceSeparator(
         private const val ANGLE_SPREAD_DEG = 60.0
         private const val DEFAULT_ENERGY_NORM = 32768.0
         private const val BASE_ENERGY_OFFSET_DB = 120.0
+
+        // --------------------------------------------------------
+        // ✅ Fold5 모드별 마이크 거리 추정 (세로 / 가로 / 펼침)
+        // --------------------------------------------------------
+        enum class FoldMode { PORTRAIT, LANDSCAPE, UNFOLDED }
+
+        fun estimateMicDistanceMm(mode: FoldMode = FoldMode.PORTRAIT): Double {
+            val est = when (mode) {
+                FoldMode.PORTRAIT -> 20.0   // 세로모드 약 2cm
+                FoldMode.LANDSCAPE -> 150.0 // 가로모드 약 15cm
+                FoldMode.UNFOLDED -> 180.0  // 펼침모드 약 18cm
+            }
+            return est.coerceAtMost(MIC_DISTANCE_MAX_MM)
+        }
     }
 
     private var nextKeyId = 1000
@@ -60,7 +67,7 @@ class WkVoiceSeparator(
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
 
     // ------------------------------------------------------------
-    // 메인
+    // 메인 루프
     // ------------------------------------------------------------
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
         val preKeys = activeKeys.toList()
@@ -76,7 +83,6 @@ class WkVoiceSeparator(
     private fun preprocessByVoiceKeys(
         keys: List<VoiceKey>, Lsrc: DoubleArray, Rsrc: DoubleArray
     ): Triple<List<SpeakerSignal>, DoubleArray, DoubleArray> {
-
         val residualL = Lsrc.copyOf()
         val residualR = Rsrc.copyOf()
         val result = mutableListOf<SpeakerSignal>()
@@ -96,14 +102,13 @@ class WkVoiceSeparator(
 
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
-
             result += SpeakerSignal(key.id, listOf(key), eDb, d, key.distanceMm)
         }
         return Triple(result, residualL, residualR)
     }
 
     // ------------------------------------------------------------
-    // 발성키 탐지
+    // 발성키 탐지 (위상차 ΔΦ 유지)
     // ------------------------------------------------------------
     private fun detectVoiceKeys(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
         val N = Lres.size
@@ -123,7 +128,6 @@ class WkVoiceSeparator(
             val deltaIdx = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
             val deltaMm = abs(deltaIdx) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
 
-            // 실제 거리 계산
             val distMm = when {
                 abs(deltaIdx) == 0 -> 0.0
                 deltaMm >= MIC_DISTANCE_MAX_MM -> micDistMm / 2.0
@@ -143,18 +147,6 @@ class WkVoiceSeparator(
             val avgD = grp.map { it.distanceMm }.average()
             VoiceKey(nextKeyId++, avgF, grp.first().deltaIndex, avgE, avgD)
         }
-    }
-
-    // ------------------------------------------------------------
-    // 마이크 거리 추정 (Fold5 기준)
-    // ------------------------------------------------------------
-    private fun estimateMicDistanceMm(): Double {
-        // TODO: 추후 OrientationManager 기반 동적 감지로 교체
-        // - 세로모드: 20 mm
-        // - 가로모드: 150 mm
-        // - 펼침모드: 180~200 mm
-        val estimated = 20.0  // 임시 기본값(세로모드)
-        return estimated.coerceAtMost(MIC_DISTANCE_MAX_MM)
     }
 
     // ------------------------------------------------------------
