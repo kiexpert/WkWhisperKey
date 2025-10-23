@@ -7,11 +7,13 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v5.4
+ * WkVoiceSeparator v5.5
  * -------------------------------------------------------
  * - Fold5 모드 자동 감지 (세로/가로/펼침)
  * - 마이크 간 거리 자동 추정 및 거리 기반 위상 분석
  * - 8밴드 에너지비율 기반 화자 클러스터링
+ * - Map 제거 → 배열 기반 고속화 (FFT 캐시 친화)
+ * - 밴드별 노이즈 추적(EMA)
  */
 data class VoiceKey(
     val id: Int,
@@ -26,7 +28,7 @@ data class SpeakerSignal(
     val keys: List<VoiceKey>,
     val energy: Double,
     val deltaIndex: Int,
-    val distance: Double // mm 단위
+    val distance: Double // mm
 )
 
 class WkVoiceSeparator(
@@ -35,8 +37,8 @@ class WkVoiceSeparator(
 ) {
     companion object {
         // --- 물리 상수 ---
-        private const val SPEED_OF_SOUND = 343.0        // m/s
-        private const val MIC_DISTANCE_MAX_MM = 200.0   // mm (인간 고막 기준 상한)
+        private const val SPEED_OF_SOUND = 343.0
+        private const val MIC_DISTANCE_MAX_MM = 200.0
 
         // --- 분석 파라미터 ---
         private const val RESIDUAL_ATTENUATION = 0.6
@@ -46,8 +48,15 @@ class WkVoiceSeparator(
         private const val DEFAULT_ENERGY_NORM = 32768.0
         private const val BASE_ENERGY_OFFSET_DB = 120.0
 
+        // --- 노이즈 추적 ---
+        private const val NOISE_EMA_ALPHA = 0.10
+        private const val NEWKEY_SNR_FACTOR = 2.0
+        private const val KEEPKEY_SNR_FACTOR = 1.5
+        private const val WHISPER_IDX1 = 1  // 700Hz
+        private const val WHISPER_IDX2 = 4  // 2500Hz
+
         // --------------------------------------------------------
-        // ✅ Fold5 모드 자동 감지 기반 마이크 거리 추정
+        // Fold5 모드 자동 감지 기반 마이크 거리 추정
         // --------------------------------------------------------
         fun estimateMicDistanceMm(): Double {
             val context = WkApp.instance.applicationContext
@@ -58,35 +67,37 @@ class WkVoiceSeparator(
             val width = metrics.widthPixels.toDouble()
             val height = metrics.heightPixels.toDouble()
             val aspect = width / height
-
             val orientation = context.resources.configuration.orientation
 
-            // --- 모드 판별 ---
             val mode = when {
-                aspect > 1.9 -> "UNFOLDED"   // 매우 넓은 비율 → 펼침
+                aspect > 1.9 -> "UNFOLDED"
                 orientation == Configuration.ORIENTATION_LANDSCAPE -> "LANDSCAPE"
                 else -> "PORTRAIT"
             }
 
-            // --- 거리 추정 ---
             val distMm = when (mode) {
-                "PORTRAIT" -> 20.0   // 세로모드 약 2cm
-                "LANDSCAPE" -> 150.0 // 가로모드 약 15cm
-                "UNFOLDED" -> 180.0  // 펼침모드 약 18cm
+                "PORTRAIT" -> 20.0
+                "LANDSCAPE" -> 150.0
+                "UNFOLDED" -> 180.0
                 else -> 20.0
             }
-
             return distMm.coerceAtMost(MIC_DISTANCE_MAX_MM)
         }
     }
 
+    // 내부 상태
     private var nextKeyId = 1000
     private var nextSpeakerId = 1
     private var activeKeys = mutableListOf<VoiceKey>()
+
+    // 밴드별 분석 버퍼
+    private val noiseFloor = DoubleArray(bands.size) { 1e-9 }
+    private val energyByBand = DoubleArray(bands.size)
+    private val deltaIdxByBand = IntArray(bands.size)
+    private val snrByBand = DoubleArray(bands.size)
+
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
 
-    // ------------------------------------------------------------
-    // 메인 루프
     // ------------------------------------------------------------
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
         val preKeys = activeKeys.toList()
@@ -96,8 +107,6 @@ class WkVoiceSeparator(
         return clusterByEnergyPattern(activeKeys)
     }
 
-    // ------------------------------------------------------------
-    // 전처리
     // ------------------------------------------------------------
     private fun preprocessByVoiceKeys(
         keys: List<VoiceKey>, Lsrc: DoubleArray, Rsrc: DoubleArray
@@ -127,39 +136,56 @@ class WkVoiceSeparator(
     }
 
     // ------------------------------------------------------------
-    // 발성키 탐지 (위상차 ΔΦ 유지)
-    // ------------------------------------------------------------
     private fun detectVoiceKeys(Lres: DoubleArray, Rres: DoubleArray): List<VoiceKey> {
         val N = Lres.size
         val fftL = fft(Lres)
         val fftR = fft(Rres)
-        val keys = mutableListOf<VoiceKey>()
         val micDistMm = estimateMicDistanceMm()
 
-        for (f in bands) {
+        // --- 밴드별 에너지 및 위상차 ---
+        for (i in bands.indices) {
+            val f = bands[i]
             val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
-            val phaseL = atan2(fftL[bin].imag, fftL[bin].real)
-            val phaseR = atan2(fftR[bin].imag, fftR[bin].real)
-            var dPhi = phaseR - phaseL
+            val realL = fftL[bin].real
+            val imagL = fftL[bin].imag
+            val realR = fftR[bin].real
+            val imagR = fftR[bin].imag
+
+            val magL = hypot(realL, imagL)
+            val magR = hypot(realR, imagR)
+            energyByBand[i] = (magL + magR) * 0.5
+
+            var dPhi = atan2(imagR, realR) - atan2(imagL, realL)
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
 
-            val deltaIdx = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
-            val deltaMm = abs(deltaIdx) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
+            deltaIdxByBand[i] = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
+            snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
 
+            // 노이즈 EMA 업데이트
+            noiseFloor[i] = (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
+        }
+
+        // --- 듀얼레퍼런스 속삭임 기준 통과 검사 ---
+        val passWhisper =
+            (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
+            (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
+        if (!passWhisper) return emptyList()
+
+        // --- 발성키 생성 ---
+        val keys = mutableListOf<VoiceKey>()
+        for (i in bands.indices) {
+            val deltaIdx = deltaIdxByBand[i]
+            val deltaMm = abs(deltaIdx) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
             val distMm = when {
                 abs(deltaIdx) == 0 -> 0.0
                 deltaMm >= MIC_DISTANCE_MAX_MM -> micDistMm / 2.0
                 else -> ((micDistMm * micDistMm) - (deltaMm * deltaMm)) / (2 * deltaMm)
             }.coerceAtLeast(0.0)
-
-            val magL = sqrt(fftL[bin].real * fftL[bin].real + fftL[bin].imag * fftL[bin].imag)
-            val magR = sqrt(fftR[bin].real * fftR[bin].real + fftR[bin].imag * fftR[bin].imag)
-            val energy = ((magL + magR) / 2.0).coerceAtLeast(ENERGY_MIN_THRESHOLD)
-
-            keys += VoiceKey(nextKeyId++, f, deltaIdx, energy, distMm)
+            keys += VoiceKey(nextKeyId++, bands[i], deltaIdx, energyByBand[i], distMm)
         }
 
+        // --- 발성키 병합 ---
         return keys.groupBy { it.deltaIndex }.map { (_, grp) ->
             val avgF = grp.map { it.freq }.average()
             val avgE = grp.map { it.energy }.average()
@@ -168,8 +194,6 @@ class WkVoiceSeparator(
         }
     }
 
-    // ------------------------------------------------------------
-    // 발성키 병합
     // ------------------------------------------------------------
     private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): List<VoiceKey> {
         val merged = mutableListOf<VoiceKey>()
@@ -181,8 +205,6 @@ class WkVoiceSeparator(
         return merged.sortedByDescending { it.energy }
     }
 
-    // ------------------------------------------------------------
-    // 화자 클러스터링
     // ------------------------------------------------------------
     private fun clusterByEnergyPattern(keys: List<VoiceKey>): List<SpeakerSignal> {
         val groups = mutableListOf<MutableList<VoiceKey>>()
@@ -219,8 +241,6 @@ class WkVoiceSeparator(
         return dot / (normA * normB + ENERGY_MIN_THRESHOLD)
     }
 
-    // ------------------------------------------------------------
-    // FFT
     // ------------------------------------------------------------
     private fun fft(x: DoubleArray): Array<Complex> {
         val N = x.size
