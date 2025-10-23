@@ -5,9 +5,10 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
+import ai.willkim.wkwhisperkey.audio.WkIntEnergyAnalyzer
 
 /**
- * WkVoiceSeparator v5.8
+ * WkVoiceSeparator v6.0
  * -------------------------------------------------------
  * - Fold5 모드 자동감지 (세로/가로/펼침)
  * - 마이크 거리 자동추정 및 위상 기반 거리 해석
@@ -183,6 +184,135 @@ class WkVoiceSeparator(
         val (dn, distMm) = resolveDeltaIndexByVoting(phaseDiff, bands, energyByBand)
         if (dn == 0 || distMm <= 0.0) return null
 
+        val maxIdx = energyByBand.indices.maxByOrNull { energyByBand[it] } ?: return null
+        val f = bands[maxIdx]
+        val e = energyByBand[maxIdx].coerceAtLeast(ENERGY_MIN_THRESHOLD)
+        return VoiceKey(nextKeyId++, f, dn, e, distMm)
+    }
+
+    // ------------------------------------------------------------
+    // 🔹 정수 기반 분리 메인 루프 (branchless + float-free)
+    // ------------------------------------------------------------
+    fun separateInt(L: ShortArray, R: ShortArray): List<SpeakerSignal> {
+        val preKeys = activeKeys.toList()
+    
+        // 🔸 정수 전처리 경로로 호출
+        val (preSpk, resL, resR) = preprocessByVoiceKeysInt(preKeys, L, R)
+    
+        // 🔸 FFT/위상 계산은 여전히 더블 기반 (정밀도 필요)
+        detectVoiceKeyInt(resL, resR)?.let {
+            activeKeys = mergeKeys(preKeys, listOf(it)).toMutableList()
+        }
+    
+        return clusterByEnergyPattern(activeKeys)
+    }
+
+    // ------------------------------------------------------------
+    // 🔹 정수(Short) 기반 전처리 (branchless / float-free)
+    // ------------------------------------------------------------
+    private fun preprocessByVoiceKeysInt(
+        keys: List<VoiceKey>, Lsrc: ShortArray, Rsrc: ShortArray
+    ): Triple<List<SpeakerSignal>, IntArray, IntArray> {
+    
+        val N = Lsrc.size
+        val Npad = N + PAD_SAMPLES * 2
+        val residualL = IntArray(Npad)
+        val residualR = IntArray(Npad)
+    
+        // ±패딩 적용
+        for (i in 0 until N) {
+            residualL[i + PAD_SAMPLES] = Lsrc[i].toInt()
+            residualR[i + PAD_SAMPLES] = Rsrc[i].toInt()
+        }
+    
+        val result = mutableListOf<SpeakerSignal>()
+    
+        // 🔸 고에너지 키 우선 역보정
+        for (key in keys.sortedByDescending { it.energy }) {
+            val d = key.deltaIndex
+    
+            // 완전 정수 루프 (branchless)
+            for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
+                val j = i - d
+                val l = residualL[i]
+                val r = residualR[j]
+                val s = (l + r) / 2
+                val att = (s * 5) shr 3  // ≈ s * 0.625  (정수 근사)
+                residualL[i] = l - att
+                residualR[j] = r - att
+            }
+        }
+    
+        // 🔸 RMS 계산 (L 기준)
+        var sumSq = 0L
+        for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
+            val v = residualL[i]
+            sumSq += v * v
+        }
+    
+        val rms = sqrt(sumSq.toDouble() / N)
+        val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
+    
+        // 🔸 단일 대표 키만 반환
+        if (keys.isNotEmpty()) {
+            val k = keys.maxByOrNull { it.energy }!!
+            result += SpeakerSignal(k.id, keys, eDb, k.deltaIndex, k.distanceMm)
+        }
+    
+        // 중앙 영역만 반환
+        val coreL = residualL.copyOfRange(PAD_SAMPLES, PAD_SAMPLES + N)
+        val coreR = residualR.copyOfRange(PAD_SAMPLES, PAD_SAMPLES + N)
+        return Triple(result, coreL, coreR)
+    }
+
+    // ------------------------------------------------------------
+    // 🔹 FFT + 위상차 분석 부분 (resL/resR = IntArray)
+    // ------------------------------------------------------------
+    private fun detectVoiceKeyInt(Lres: IntArray, Rres: IntArray): VoiceKey? {
+        val N = Lres.size
+        val Npad = N + PAD_SAMPLES * 2
+        val paddedL = DoubleArray(Npad)
+        val paddedR = DoubleArray(Npad)
+    
+        // 🔸 Int → Double 변환 최소화
+        for (i in 0 until N) {
+            paddedL[i + PAD_SAMPLES] = Lres[i].toDouble()
+            paddedR[i + PAD_SAMPLES] = Rres[i].toDouble()
+        }
+    
+        val fftL = fft(paddedL)
+        val fftR = fft(paddedR)
+        val micDistMm = estimateMicDistanceMm()
+    
+        // 🔸 밴드별 위상 분석
+        for (i in bands.indices) {
+            val f = bands[i]
+            val bin = (f / (sampleRate / Npad.toDouble())).roundToInt().coerceIn(0, Npad - 1)
+            val magL = hypot(fftL[bin].real, fftL[bin].imag)
+            val magR = hypot(fftR[bin].real, fftR[bin].imag)
+            energyByBand[i] = (magL + magR) * 0.5
+            val phL = atan2(fftL[bin].imag, fftL[bin].real)
+            val phR = atan2(fftR[bin].imag, fftR[bin].real)
+            var dPhi = phR - phL
+            if (dPhi > Math.PI) dPhi -= 2 * Math.PI
+            if (dPhi < -Math.PI) dPhi += 2 * Math.PI
+            phaseDiff[i] = dPhi
+            snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
+            noiseFloor[i] =
+                (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
+        }
+    
+        // 🔸 속삭임 주파수 SNR 체크
+        val passWhisper =
+            (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
+            (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
+        if (!passWhisper) return null
+    
+        // 🔸 Δindex 계산 (위상 투표)
+        val (dn, distMm) = resolveDeltaIndexByVoting(phaseDiff, bands, energyByBand)
+        if (dn == 0 || distMm <= 0.0) return null
+    
+        // 🔸 발성키 생성
         val maxIdx = energyByBand.indices.maxByOrNull { energyByBand[it] } ?: return null
         val f = bands[maxIdx]
         val e = energyByBand[maxIdx].coerceAtLeast(ENERGY_MIN_THRESHOLD)
