@@ -24,10 +24,9 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     private val frameMs = 20
     private val N = (sampleRate * frameMs / 1000.0).roundToInt()
     private val hop = N / 2
-    private val PAD_SAMPLES = 600
+    private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
 
-    // 🔹 패딩 포함 안전 버퍼
-    private val ring = ShortArray(4 * N + 2 * PAD_SAMPLES)
+    private val ring = ShortArray(4 * N)
     private var rp = 0
     private var filled = 0
 
@@ -130,55 +129,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             }
             infoText.text = sb.toString()
             speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
-        } catch (e: Exception) {
-            infoText.text = "분석 오류: ${e.message}"
-        }
-    }
-
-    // 🔹 PCM 순환버퍼 누적
-    private fun xonPcm(stereo: ShortArray) {
-        for (i in stereo.indices) {
-            ring[rp] = stereo[i]
-            rp = (rp + 1) % ring.size
-        }
-        filled = (filled + stereo.size).coerceAtMost(ring.size)
-        if (filled >= 2 * N && (filled % (2 * hop) == 0)) processFrameShort()
-    }
-
-    // 🔹 쇼트배열 기반 분리 처리
-    private fun processFrameShort() {
-        val L = ShortArray(N)
-        val R = ShortArray(N)
-        var idx = (rp - 2 * N + ring.size) % ring.size
-        var j = 0
-        while (j < 2 * N) {
-            val l = ring[idx]; idx = (idx + 1) % ring.size
-            val r = ring[idx]; idx = (idx + 1) % ring.size
-            L[j / 2] = l
-            R[j / 2] = r
-            j += 2
-        }
-
-        try {
-            // 🔸 정수 기반 분리기 호출
-            val speakers = separator.separateInt(L, R)
-            val sorted = speakers.sortedByDescending { it.energy }.take(7)
-
-            val sb = StringBuilder()
-            sb.append("감지된 화자 수: ${speakers.size}\n")
-            for ((i, s) in sorted.withIndex()) {
-                sb.append(
-                    String.format(
-                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2fm\n",
-                        i + 1, s.energy, s.deltaIndex, s.distance
-                    )
-                )
-            }
-            infoText.text = sb.toString()
-
-            // 🔸 시각화 갱신
-            speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
-
         } catch (e: Exception) {
             infoText.text = "분석 오류: ${e.message}"
         }
