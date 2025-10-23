@@ -93,6 +93,7 @@ class WkVoiceSeparator(
     private val snrByBand = DoubleArray(bands.size)
 
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
+    fun getNoiseBandsCopy(): DoubleArray = noiseFloor.copyOf()
 
     // ------------------------------------------------------------
     fun separate(L: DoubleArray, R: DoubleArray): List<SpeakerSignal> {
