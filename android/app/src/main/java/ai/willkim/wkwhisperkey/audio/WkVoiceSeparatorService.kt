@@ -25,6 +25,7 @@ class WkVoiceSeparatorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private lateinit var separator: WkVoiceSeparator
+    fun getSeparator(): WkVoiceSeparator = separator
 
     @Volatile var currentSpeakers: List<SpeakerSignal> = emptyList()
         private set
