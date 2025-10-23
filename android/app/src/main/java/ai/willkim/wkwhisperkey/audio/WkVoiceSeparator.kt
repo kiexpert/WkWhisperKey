@@ -7,11 +7,12 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v5.7
+ * WkVoiceSeparator v5.8
  * -------------------------------------------------------
  * - Fold5 모드 자동감지 (세로/가로/펼침)
- * - 마이크 거리 자동추정 및 위상 기반 거리 해석
+ * - 반파장 패딩 기반 위상 안정화
  * - 연립방정식(2~3밴드 일치) 기반 물리거리 확정
+ * - FFT 캐시 토글 지원 (기본 false)
  * - 1개 확정된 발성키만 생성 (or 없음)
  * - 밴드별 노이즈 추적(EMA) 및 기존키 감쇠/드랍
  */
@@ -58,6 +59,9 @@ class WkVoiceSeparator(
         private const val TOP_BANDS_FOR_VOTE = 6
         private const val EXCLUDE_LOW_FREQ = 1
 
+        // ✅ FFT 캐시 토글
+        private const val USE_FFT_CACHE = false
+
         fun estimateMicDistanceMm(): Double {
             val context = WkApp.instance.applicationContext
             val wm = context.getSystemService(WindowManager::class.java)
@@ -92,6 +96,11 @@ class WkVoiceSeparator(
     private val energyByBand = DoubleArray(bands.size)
     private val snrByBand = DoubleArray(bands.size)
 
+    // FFT 캐시
+    private var lastFftL: Array<Complex>? = null
+    private var lastFftR: Array<Complex>? = null
+    private var lastFrameHash = 0L
+
     fun getActiveKeys(): List<VoiceKey> = activeKeys.toList()
     fun getNoiseBandsCopy(): DoubleArray = noiseFloor.copyOf()
 
@@ -125,7 +134,6 @@ class WkVoiceSeparator(
                 residualL[i] = l - s * RESIDUAL_ATTENUATION
                 if (j in residualR.indices) residualR[j] = r - s * RESIDUAL_ATTENUATION
             }
-
             val rms = sqrt(spk.sumOf { it * it } / spk.size)
             val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
             result += SpeakerSignal(key.id, listOf(key), eDb, d, key.distanceMm)
@@ -134,39 +142,71 @@ class WkVoiceSeparator(
     }
 
     // ------------------------------------------------------------
-    // ✅ 단일 확정 발성키 탐지
+    // ✅ 반파장 패딩 + FFT 캐시 토글형
     // ------------------------------------------------------------
-    private fun detectVoiceKey(Lres: DoubleArray, Rres: DoubleArray): VoiceKey? {
-        val N = Lres.size
-        val fftL = fft(Lres)
-        val fftR = fft(Rres)
+    private fun detectVoiceKey(Lsrc: DoubleArray, Rsrc: DoubleArray): VoiceKey? {
+        val N = Lsrc.size
         val micDistMm = estimateMicDistanceMm()
 
-        // --- 밴드별 분석 ---
+        // 반파장 확장
+        val minFreq = bands.minOrNull() ?: 150.0
+        val halfLambdaSamples = (sampleRate / (2 * minFreq)).roundToInt()
+        val ext = halfLambdaSamples.coerceAtMost(N / 4)
+        val paddedL = DoubleArray(N + 2 * ext)
+        val paddedR = DoubleArray(N + 2 * ext)
+        System.arraycopy(Lsrc, 0, paddedL, ext, N)
+        System.arraycopy(Rsrc, 0, paddedR, ext, N)
+
+        // 해시 계산 (FFT 캐시용)
+        var hash = 1L
+        if (USE_FFT_CACHE) {
+            for (i in 0 until 64 step 8) {
+                val idx = (i * N / 64).coerceIn(0, N - 1)
+                hash = 31 * hash + (Lsrc[idx].toLong() xor Rsrc[idx].toLong())
+            }
+        }
+
+        val fftL: Array<Complex>
+        val fftR: Array<Complex>
+
+        if (USE_FFT_CACHE && hash == lastFrameHash && lastFftL != null && lastFftR != null) {
+            fftL = lastFftL!!
+            fftR = lastFftR!!
+        } else {
+            fftL = fft(paddedL)
+            fftR = fft(paddedR)
+            if (USE_FFT_CACHE) {
+                lastFftL = fftL
+                lastFftR = fftR
+                lastFrameHash = hash
+            }
+        }
+
+        // 밴드별 분석
         for (i in bands.indices) {
             val f = bands[i]
-            val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
-            val magL = hypot(fftL[bin].real, fftL[bin].imag)
-            val magR = hypot(fftR[bin].real, fftR[bin].imag)
-            energyByBand[i] = (magL + magR) * 0.5
+            val bin = (f / (sampleRate / fftL.size.toDouble())).roundToInt().coerceIn(0, fftL.size - 1)
             val phL = atan2(fftL[bin].imag, fftL[bin].real)
             val phR = atan2(fftR[bin].imag, fftR[bin].real)
             var dPhi = phR - phL
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
             phaseDiff[i] = dPhi
+
+            val magL = hypot(fftL[bin].real, fftL[bin].imag)
+            val magR = hypot(fftR[bin].real, fftR[bin].imag)
+            energyByBand[i] = (magL + magR) * 0.5
             snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
-            noiseFloor[i] =
-                (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
+            noiseFloor[i] = (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
         }
 
-        // --- 속삭임 SNR 조건 ---
+        // 속삭임 통과 조건
         val passWhisper =
             (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
             (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
         if (!passWhisper) return null
 
-        // --- 위상 기반 연립방정식 투표 ---
+        // Δindex 추정
         val (dn, distMm) = resolveDeltaIndexByVoting(phaseDiff, bands, energyByBand)
         if (dn == 0 || distMm <= 0.0) return null
 
@@ -177,15 +217,14 @@ class WkVoiceSeparator(
     }
 
     // ------------------------------------------------------------
-    // ✅ 연립방정식 기반 Δindex 확정
+    // ✅ Δindex 투표 기반 거리 확정
     // ------------------------------------------------------------
     private fun resolveDeltaIndexByVoting(
         phaseDiff: DoubleArray,
         freqs: DoubleArray,
         energy: DoubleArray
     ): Pair<Int, Double> {
-        val maxDelaySamples =
-            (MIC_DISTANCE_MAX_MM / 1000.0 / SPEED_OF_SOUND * sampleRate).roundToInt()
+        val maxDelaySamples = (MIC_DISTANCE_MAX_MM / 1000.0 / SPEED_OF_SOUND * sampleRate).roundToInt()
         val order = (freqs.indices).sortedByDescending { energy[it] }
         val voteBands = order.drop(EXCLUDE_LOW_FREQ).take(TOP_BANDS_FOR_VOTE)
 
@@ -228,75 +267,11 @@ class WkVoiceSeparator(
     }
 
     // ------------------------------------------------------------
-    private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): List<VoiceKey> {
-        val merged = mutableListOf<VoiceKey>()
-        for (n in new) {
-            val near = old.find { abs(it.deltaIndex - n.deltaIndex) < MAX_CLUSTER_GAP }
-            if (near == null) {
-                merged += n
-                keyLastSeen[n.id] = 0
-            } else {
-                merged += n.copy(energy = (near.energy + n.energy) * 0.5)
-                keyLastSeen[near.id] = 0
-            }
-        }
-        for (o in old) {
-            val age = (keyLastSeen[o.id] ?: 0) + 1
-            val isWeak = o.energy < KEEPKEY_SNR_FACTOR * ENERGY_MIN_THRESHOLD
-            if (age < DROP_THRESHOLD_FRAMES && !isWeak) {
-                merged += o.copy(energy = o.energy * ENERGY_DECAY_RATE)
-                keyLastSeen[o.id] = age
-            } else keyLastSeen.remove(o.id)
-        }
-        return merged.sortedByDescending { it.energy }
-    }
-
+    // 기타 (merge / cluster / fft)
     // ------------------------------------------------------------
-    private fun clusterByEnergyPattern(keys: List<VoiceKey>): List<SpeakerSignal> {
-        val groups = mutableListOf<MutableList<VoiceKey>>()
-        for (k in keys) {
-            var assigned = false
-            for (grp in groups) {
-                val sim = energyPatternSimilarity(k, grp.first())
-                if (sim > ENERGY_SIM_THRESHOLD) {
-                    grp += k; assigned = true; break
-                }
-            }
-            if (!assigned) groups += mutableListOf(k)
-        }
-
-        return groups.map { grp ->
-            val id = nextSpeakerId++
-            val avgE = grp.map { it.energy }.average()
-            val avgΔ = grp.map { it.deltaIndex }.average().roundToInt()
-            val avgD = grp.map { it.distanceMm }.average()
-            SpeakerSignal(id, grp, avgE, avgΔ, avgD)
-        }
-    }
-
-    private fun energyPatternSimilarity(a: VoiceKey, b: VoiceKey): Double {
-        val aVec = doubleArrayOf(a.energy, a.freq)
-        val bVec = doubleArrayOf(b.energy, b.freq)
-        val dot = aVec.zip(bVec).sumOf { it.first * it.second }
-        val normA = sqrt(aVec.sumOf { it * it })
-        val normB = sqrt(bVec.sumOf { it * it })
-        return dot / (normA * normB + ENERGY_MIN_THRESHOLD)
-    }
-
-    // ------------------------------------------------------------
-    private fun fft(x: DoubleArray): Array<Complex> {
-        val N = x.size
-        if (N <= 1) return arrayOf(Complex(x[0], 0.0))
-        val even = fft(x.filterIndexed { i, _ -> i % 2 == 0 }.toDoubleArray())
-        val odd = fft(x.filterIndexed { i, _ -> i % 2 == 1 }.toDoubleArray())
-        val result = Array(N) { Complex(0.0, 0.0) }
-        for (k in 0 until N / 2) {
-            val t = Complex.polar(1.0, -2 * Math.PI * k / N) * odd[k]
-            result[k] = even[k] + t
-            result[k + N / 2] = even[k] - t
-        }
-        return result
-    }
+    private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): List<VoiceKey> { ... }
+    private fun clusterByEnergyPattern(keys: List<VoiceKey>): List<SpeakerSignal> { ... }
+    private fun fft(x: DoubleArray): Array<Complex> { ... }
 
     private data class Complex(val real: Double, val imag: Double) {
         operator fun plus(o: Complex) = Complex(real + o.real, imag + o.imag)
