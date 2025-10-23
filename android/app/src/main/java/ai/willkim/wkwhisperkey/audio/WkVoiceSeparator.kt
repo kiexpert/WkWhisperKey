@@ -1,14 +1,17 @@
 package ai.willkim.wkwhisperkey.audio
 
+import android.content.res.Configuration
+import android.util.DisplayMetrics
+import android.view.WindowManager
+import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v5.3
+ * WkVoiceSeparator v5.4
  * -------------------------------------------------------
- * - 각 밴드 위상차(ΔΦ) 기반 발성키 생성
+ * - Fold5 모드 자동 감지 (세로/가로/펼침)
+ * - 마이크 간 거리 자동 추정 및 거리 기반 위상 분석
  * - 8밴드 에너지비율 기반 화자 클러스터링
- * - Fold5 모드별 마이크 간 거리 자동 추정
- * - 모든 주요 상수 명시 + 주석에 물리적 근거 명기
  */
 data class VoiceKey(
     val id: Int,
@@ -33,31 +36,47 @@ class WkVoiceSeparator(
     companion object {
         // --- 물리 상수 ---
         private const val SPEED_OF_SOUND = 343.0        // m/s
-        private const val MIC_DISTANCE_MAX_MM = 200.0   // mm (인간 고막 기준 한계)
+        private const val MIC_DISTANCE_MAX_MM = 200.0   // mm (인간 고막 기준 상한)
 
         // --- 분석 파라미터 ---
         private const val RESIDUAL_ATTENUATION = 0.6
         private const val ENERGY_SIM_THRESHOLD = 0.85
         private const val MAX_CLUSTER_GAP = 3
         private const val ENERGY_MIN_THRESHOLD = 1e-9
-
-        // --- 시각화용 ---
-        private const val ANGLE_SPREAD_DEG = 60.0
         private const val DEFAULT_ENERGY_NORM = 32768.0
         private const val BASE_ENERGY_OFFSET_DB = 120.0
 
         // --------------------------------------------------------
-        // ✅ Fold5 모드별 마이크 거리 추정 (세로 / 가로 / 펼침)
+        // ✅ Fold5 모드 자동 감지 기반 마이크 거리 추정
         // --------------------------------------------------------
-        enum class FoldMode { PORTRAIT, LANDSCAPE, UNFOLDED }
+        fun estimateMicDistanceMm(): Double {
+            val context = WkApp.instance.applicationContext
+            val wm = context.getSystemService(WindowManager::class.java)
+            val metrics = DisplayMetrics()
+            wm?.defaultDisplay?.getRealMetrics(metrics)
 
-        fun estimateMicDistanceMm(mode: FoldMode = FoldMode.PORTRAIT): Double {
-            val est = when (mode) {
-                FoldMode.PORTRAIT -> 20.0   // 세로모드 약 2cm
-                FoldMode.LANDSCAPE -> 150.0 // 가로모드 약 15cm
-                FoldMode.UNFOLDED -> 180.0  // 펼침모드 약 18cm
+            val width = metrics.widthPixels.toDouble()
+            val height = metrics.heightPixels.toDouble()
+            val aspect = width / height
+
+            val orientation = context.resources.configuration.orientation
+
+            // --- 모드 판별 ---
+            val mode = when {
+                aspect > 1.9 -> "UNFOLDED"   // 매우 넓은 비율 → 펼침
+                orientation == Configuration.ORIENTATION_LANDSCAPE -> "LANDSCAPE"
+                else -> "PORTRAIT"
             }
-            return est.coerceAtMost(MIC_DISTANCE_MAX_MM)
+
+            // --- 거리 추정 ---
+            val distMm = when (mode) {
+                "PORTRAIT" -> 20.0   // 세로모드 약 2cm
+                "LANDSCAPE" -> 150.0 // 가로모드 약 15cm
+                "UNFOLDED" -> 180.0  // 펼침모드 약 18cm
+                else -> 20.0
+            }
+
+            return distMm.coerceAtMost(MIC_DISTANCE_MAX_MM)
         }
     }
 
