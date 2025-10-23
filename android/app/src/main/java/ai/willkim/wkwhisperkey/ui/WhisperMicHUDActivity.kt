@@ -93,8 +93,50 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         micManager.startStereo()
     }
 
-    // 🔹 PCM 순환버퍼 누적
     private fun onPcm(stereo: ShortArray) {
+        for (i in stereo.indices) {
+            ring[rp] = stereo[i]
+            rp = (rp + 1) % ring.size
+        }
+        filled = (filled + stereo.size).coerceAtMost(ring.size)
+        if (filled >= 2 * N && (filled % (2 * hop) == 0)) processFrame()
+    }
+
+    private fun processFrame() {
+        val L = DoubleArray(N)
+        val R = DoubleArray(N)
+        var idx = (rp - 2 * N + ring.size) % ring.size
+        var j = 0
+        while (j < 2 * N) {
+            val l = ring[idx].toInt(); idx = (idx + 1) % ring.size
+            val r = ring[idx].toInt(); idx = (idx + 1) % ring.size
+            L[j / 2] = l.toDouble()
+            R[j / 2] = r.toDouble()
+            j += 2
+        }
+
+        try {
+            val speakers = separator.separate(L, R)
+            val sorted = speakers.sortedByDescending { it.energy }.take(7)
+            val sb = StringBuilder()
+            sb.append("감지된 화자 수: ${speakers.size}\n")
+            for ((i, s) in sorted.withIndex()) {
+                sb.append(
+                    String.format(
+                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2fm\n",
+                        i + 1, s.energy, s.deltaIndex, s.distance
+                    )
+                )
+            }
+            infoText.text = sb.toString()
+            speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
+        } catch (e: Exception) {
+            infoText.text = "분석 오류: ${e.message}"
+        }
+    }
+
+    // 🔹 PCM 순환버퍼 누적
+    private fun xonPcm(stereo: ShortArray) {
         for (i in stereo.indices) {
             ring[rp] = stereo[i]
             rp = (rp + 1) % ring.size
