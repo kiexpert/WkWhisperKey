@@ -7,13 +7,12 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkVoiceSeparator v5.5
+ * WkVoiceSeparator v5.6
  * -------------------------------------------------------
- * - Fold5 모드 자동 감지 (세로/가로/펼침)
- * - 마이크 간 거리 자동 추정 및 거리 기반 위상 분석
- * - 8밴드 에너지비율 기반 화자 클러스터링
- * - Map 제거 → 배열 기반 고속화 (FFT 캐시 친화)
- * - 밴드별 노이즈 추적(EMA)
+ * - Fold5 모드 자동감지 (세로/가로/펼침)
+ * - 마이크 거리 자동추정 및 거리 기반 위상 분석
+ * - 8밴드 에너지 비율 기반 화자 클러스터링
+ * - 밴드별 노이즈 추적(EMA) + 기존 발성키 드랍/감쇠 로직
  */
 data class VoiceKey(
     val id: Int,
@@ -28,7 +27,7 @@ data class SpeakerSignal(
     val keys: List<VoiceKey>,
     val energy: Double,
     val deltaIndex: Int,
-    val distance: Double // mm
+    val distance: Double
 )
 
 class WkVoiceSeparator(
@@ -36,11 +35,9 @@ class WkVoiceSeparator(
     private val bands: DoubleArray
 ) {
     companion object {
-        // --- 물리 상수 ---
         private const val SPEED_OF_SOUND = 343.0
         private const val MIC_DISTANCE_MAX_MM = 200.0
 
-        // --- 분석 파라미터 ---
         private const val RESIDUAL_ATTENUATION = 0.6
         private const val ENERGY_SIM_THRESHOLD = 0.85
         private const val MAX_CLUSTER_GAP = 3
@@ -48,33 +45,29 @@ class WkVoiceSeparator(
         private const val DEFAULT_ENERGY_NORM = 32768.0
         private const val BASE_ENERGY_OFFSET_DB = 120.0
 
-        // --- 노이즈 추적 ---
         private const val NOISE_EMA_ALPHA = 0.10
         private const val NEWKEY_SNR_FACTOR = 2.0
         private const val KEEPKEY_SNR_FACTOR = 1.5
-        private const val WHISPER_IDX1 = 1  // 700Hz
-        private const val WHISPER_IDX2 = 4  // 2500Hz
+        private const val WHISPER_IDX1 = 1
+        private const val WHISPER_IDX2 = 4
 
-        // --------------------------------------------------------
-        // Fold5 모드 자동 감지 기반 마이크 거리 추정
-        // --------------------------------------------------------
+        private const val DROP_THRESHOLD_FRAMES = 8
+        private const val ENERGY_DECAY_RATE = 0.95
+
         fun estimateMicDistanceMm(): Double {
             val context = WkApp.instance.applicationContext
             val wm = context.getSystemService(WindowManager::class.java)
             val metrics = DisplayMetrics()
             wm?.defaultDisplay?.getRealMetrics(metrics)
-
             val width = metrics.widthPixels.toDouble()
             val height = metrics.heightPixels.toDouble()
             val aspect = width / height
             val orientation = context.resources.configuration.orientation
-
             val mode = when {
                 aspect > 1.9 -> "UNFOLDED"
                 orientation == Configuration.ORIENTATION_LANDSCAPE -> "LANDSCAPE"
                 else -> "PORTRAIT"
             }
-
             val distMm = when (mode) {
                 "PORTRAIT" -> 20.0
                 "LANDSCAPE" -> 150.0
@@ -85,12 +78,11 @@ class WkVoiceSeparator(
         }
     }
 
-    // 내부 상태
     private var nextKeyId = 1000
     private var nextSpeakerId = 1
     private var activeKeys = mutableListOf<VoiceKey>()
+    private val keyLastSeen = mutableMapOf<Int, Int>()
 
-    // 밴드별 분석 버퍼
     private val noiseFloor = DoubleArray(bands.size) { 1e-9 }
     private val energyByBand = DoubleArray(bands.size)
     private val deltaIdxByBand = IntArray(bands.size)
@@ -142,7 +134,6 @@ class WkVoiceSeparator(
         val fftR = fft(Rres)
         val micDistMm = estimateMicDistanceMm()
 
-        // --- 밴드별 에너지 및 위상차 ---
         for (i in bands.indices) {
             val f = bands[i]
             val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
@@ -150,29 +141,22 @@ class WkVoiceSeparator(
             val imagL = fftL[bin].imag
             val realR = fftR[bin].real
             val imagR = fftR[bin].imag
-
             val magL = hypot(realL, imagL)
             val magR = hypot(realR, imagR)
             energyByBand[i] = (magL + magR) * 0.5
-
             var dPhi = atan2(imagR, realR) - atan2(imagL, realL)
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
-
             deltaIdxByBand[i] = (dPhi / (2 * Math.PI * f) * sampleRate).roundToInt()
             snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
-
-            // 노이즈 EMA 업데이트
             noiseFloor[i] = (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
         }
 
-        // --- 듀얼레퍼런스 속삭임 기준 통과 검사 ---
         val passWhisper =
             (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
             (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
         if (!passWhisper) return emptyList()
 
-        // --- 발성키 생성 ---
         val keys = mutableListOf<VoiceKey>()
         for (i in bands.indices) {
             val deltaIdx = deltaIdxByBand[i]
@@ -185,7 +169,6 @@ class WkVoiceSeparator(
             keys += VoiceKey(nextKeyId++, bands[i], deltaIdx, energyByBand[i], distMm)
         }
 
-        // --- 발성키 병합 ---
         return keys.groupBy { it.deltaIndex }.map { (_, grp) ->
             val avgF = grp.map { it.freq }.average()
             val avgE = grp.map { it.energy }.average()
@@ -197,10 +180,28 @@ class WkVoiceSeparator(
     // ------------------------------------------------------------
     private fun mergeKeys(old: List<VoiceKey>, new: List<VoiceKey>): List<VoiceKey> {
         val merged = mutableListOf<VoiceKey>()
-        merged += old
+
+        // 신규키 추가 + 갱신
         for (n in new) {
             val near = old.find { abs(it.deltaIndex - n.deltaIndex) < MAX_CLUSTER_GAP }
-            if (near == null) merged += n
+            if (near == null) {
+                merged += n
+                keyLastSeen[n.id] = 0
+            } else {
+                merged += n.copy(energy = (near.energy + n.energy) * 0.5)
+                keyLastSeen[near.id] = 0
+            }
+        }
+
+        // 기존키 감쇠 / 드랍
+        for (o in old) {
+            val frameAge = (keyLastSeen[o.id] ?: 0) + 1
+            val isWeak = o.energy < KEEPKEY_SNR_FACTOR * ENERGY_MIN_THRESHOLD
+            val shouldDrop = frameAge > DROP_THRESHOLD_FRAMES || isWeak
+            if (!shouldDrop) {
+                merged += o.copy(energy = o.energy * ENERGY_DECAY_RATE)
+                keyLastSeen[o.id] = frameAge
+            } else keyLastSeen.remove(o.id)
         }
         return merged.sortedByDescending { it.energy }
     }
@@ -213,9 +214,7 @@ class WkVoiceSeparator(
             for (grp in groups) {
                 val sim = energyPatternSimilarity(k, grp.first())
                 if (sim > ENERGY_SIM_THRESHOLD) {
-                    grp += k
-                    assigned = true
-                    break
+                    grp += k; assigned = true; break
                 }
             }
             if (!assigned) groups += mutableListOf(k)
@@ -261,7 +260,6 @@ class WkVoiceSeparator(
         operator fun minus(o: Complex) = Complex(real - o.real, imag - o.imag)
         operator fun times(o: Complex) =
             Complex(real * o.real - imag * o.imag, real * o.imag + imag * o.real)
-
         companion object {
             fun polar(r: Double, theta: Double) = Complex(r * cos(theta), r * sin(theta))
         }
