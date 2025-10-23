@@ -22,7 +22,9 @@ data class VoiceKey(
     val freq: Double,
     val deltaIndex: Int,
     val energy: Double,
-    val distanceMm: Double
+    val distanceMm: Double,
+    val energyPosX: Double,
+    val energyPosY: Double
 )
 
 data class SpeakerSignal(
