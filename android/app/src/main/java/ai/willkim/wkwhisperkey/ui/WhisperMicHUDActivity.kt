@@ -57,7 +57,8 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         setContentView(root)
 
         WkSafetyMonitor.initialize(this)
-        separator = WkVoiceSeparator(sampleRate, bands)
+        // separator = WkVoiceSeparator(sampleRate, bands)
+        separator = WkVoiceSeparatorService.getInstance().separator
         ensureMicPermission()
 
         micManager = WkMicArrayManager(
@@ -112,7 +113,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
             infoText.text = sb.toString()
 
             // 화자 및 발성키 모두 지도에 전달
-            speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
+            //speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
 
         } catch (e: Exception) {
             infoText.text = "분석 오류: ${e.message}"
