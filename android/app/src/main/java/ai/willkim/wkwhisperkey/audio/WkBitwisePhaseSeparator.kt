@@ -141,6 +141,20 @@ class WkBitwisePhaseSeparator(
     }
 
     // ------------------------------------------------------------
+    fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
+        var score = 0.0
+        for (b in bands.indices) {
+            val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
+            val φL = atan2(fftL[bin].imag, fftL[bin].real)
+            val φR = atan2(fftR[bin].imag, fftR[bin].real)
+            val predicted = key.phaseR - key.phaseL
+            val diff = φR - φL - predicted
+            score += cos(diff)
+        }
+        return score / bands.size
+    }
+    
+    // ------------------------------------------------------------
     private fun preprocess(
         Lsrc: ShortArray,
         Rsrc: ShortArray,
@@ -156,8 +170,11 @@ class WkBitwisePhaseSeparator(
             R[i + PAD_SAMPLES] = Rsrc[i].toInt()
         }
 
+        val fftL = fft(L.toDoubleArray())
+        val fftR = fft(R.toDoubleArray())
+
         // ---- 화자 밴드별 위상 재합성 감쇄 ----
-        for (key in keys.sortedByDescending { it.energy }) {
+        for (key in keys.sortedByDescending { phaseMatchScore(key, fftL, fftR) }) {
             val speakerΔ = key.deltaIndex
             for (b in bands.indices) {
                 val f = bands[b]
