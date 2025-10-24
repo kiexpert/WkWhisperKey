@@ -14,5 +14,5 @@ tasks.test {
 tasks.register<Test>("wkTest") {
     description = "Run only Wk algorithm tests"
     useJUnitPlatform()
-    include("**/WkBitwisePhaseSeparatorTest.class")
+    include("**/Wk*Test.class")
 }
