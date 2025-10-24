@@ -22,7 +22,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
     private val sampleRate = 44100
     private val frameMs = 20
-    private val N = (sampleRate * frameMs / 1000.0).roundToInt()
+    private val N = (sampleRate * frameMs / 1000.0).roundToInt() + (2 * 600) // add padding
     private val hop = N / 2
     private val ring = ShortArray(4 * N)
     private var rp = 0
