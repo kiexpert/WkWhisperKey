@@ -141,20 +141,6 @@ class WkBitwisePhaseSeparator(
     }
 
     // ------------------------------------------------------------
-    private fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
-        var score = 0.0
-        for (b in bands.indices) {
-            val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
-            val φL = atan2(fftL[bin].imag, fftL[bin].real)
-            val φR = atan2(fftR[bin].imag, fftR[bin].real)
-            val predicted = key.phaseR - key.phaseL
-            val diff = φR - φL - predicted
-            score += cos(diff)
-        }
-        return score / bands.size
-    }
-    
-    // ------------------------------------------------------------
     private fun preprocess(
         Lsrc: ShortArray,
         Rsrc: ShortArray,
@@ -172,6 +158,19 @@ class WkBitwisePhaseSeparator(
 
         val fftL = fft(L.toDoubleArray())
         val fftR = fft(R.toDoubleArray())
+
+        fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
+            var score = 0.0
+            for (b in bands.indices) {
+                val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
+                val φL = atan2(fftL[bin].imag, fftL[bin].real)
+                val φR = atan2(fftR[bin].imag, fftR[bin].real)
+                val predicted = key.phaseR - key.phaseL
+                val diff = φR - φL - predicted
+                score += cos(diff)
+            }
+            return score / bands.size
+        }
 
         // ---- 화자 밴드별 위상 재합성 감쇄 ----
         for (key in keys.sortedByDescending { phaseMatchScore(key, fftL, fftR) }) {
