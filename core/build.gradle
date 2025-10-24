@@ -7,6 +7,6 @@ repositories {
 }
 
 dependencies {
-    testImplementation 'org.jetbrains.kotlin:kotlin-test'
-    testImplementation 'org.jetbrains.kotlin:kotlin-test-junit5'
+    testImplementation "org.jetbrains.kotlin:kotlin-test"       // 공통
+    testImplementation "org.jetbrains.kotlin:kotlin-test-junit5" // JUnit5 전용
 }
