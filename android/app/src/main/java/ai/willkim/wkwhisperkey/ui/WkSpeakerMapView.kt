@@ -20,8 +20,13 @@ class WkSpeakerMapView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    var speakers: List<SpeakerSignal> = emptyList()
-    var allVoiceKeys: List<VoiceKey> = emptyList()
+    // 기존
+    //var speakers: List<SpeakerSignal> = emptyList()
+    //var allVoiceKeys: List<VoiceKey> = emptyList()
+    
+    // 새 버전
+    var speakers: List<WkPhaseSignal> = emptyList()
+    var allVoiceKeys: List<WkPhaseKey> = emptyList()
 
     private val MIC_DISTANCE_MAX_MM = 200f
     private val CURRENT_MIC_DIST_MM = 20f
