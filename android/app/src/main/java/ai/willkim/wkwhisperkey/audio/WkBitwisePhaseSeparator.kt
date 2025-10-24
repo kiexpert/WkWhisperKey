@@ -7,12 +7,12 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkBitwisePhaseSeparator v3.0
+ * WkBitwisePhaseSeparator v3.1
  * ---------------------------------------------------------------
  * - 정수형 8밴드 DFT (FFT 미사용)
  * - 사인테이블 기반 branchless 누적합
- * - 밴드별 위상·에너지 정수 연산
- * - 위상 정합 기반 감쇠/소거(diff-phase cancel)
+ * - 밴드별 위상·에너지 정수 연산(Long 캐스팅 안정화)
+ * - 위상 평균 기반 정합 및 라운딩 보정
  * - 단일 API: separate(L: ShortArray, R: ShortArray)
  */
 data class WkPhaseKey(
@@ -59,7 +59,7 @@ class WkBitwisePhaseSeparator(
         private const val WHISPER_IDX2 = 4
         private const val TOP_BANDS_FOR_VOTE = 6
         private const val EXCLUDE_LOW_FREQ = 1
-        private const val MOUTH_RADIUS_BITS = 32  // ≈ ±31 샘플 허용
+        private const val MOUTH_RADIUS_BITS = 32
         private const val TABLE_SIZE = 4096
 
         // ---- 정수형 SIN 테이블 ----
@@ -151,7 +151,6 @@ class WkBitwisePhaseSeparator(
         val (magL8, phaseL8) = dft8(L)
         val (magR8, phaseR8) = dft8(R)
 
-        // 위상차, 진폭저장
         for (i in bands.indices) {
             phaseDiff[i] = (phaseR8[i] - phaseL8[i])
             magL[i] = magL8[i]
@@ -172,8 +171,8 @@ class WkBitwisePhaseSeparator(
                     val ampL = magL[b]
                     val ampR = magR[b]
                     for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
-                        val cancelL = (ampL * sinI(phL) shr 15)
-                        val cancelR = (ampR * sinI(phR) shr 15)
+                        val cancelL = ((ampL * sinI(phL) + 16384) shr 15)
+                        val cancelR = ((ampR * sinI(phR) + 16384) shr 15)
                         L[i] -= cancelL
                         R[i] -= cancelR
                         phL = (phL + step) and (TABLE_SIZE - 1)
@@ -235,20 +234,24 @@ class WkBitwisePhaseSeparator(
         val N = samples.size
         val mag = IntArray(bands.size)
         val phase = IntArray(bands.size)
+
         for (b in bands.indices) {
             val f = bands[b]
             val step = phaseStep(f, sampleRate)
             var ph = 0
-            var sumRe = 0
-            var sumIm = 0
-            for (n in 0 until N step 2) { // 절반 샘플만으로 근사
+            var sumRe = 0L
+            var sumIm = 0L
+            for (n in 0 until N step 2) {
                 val s = samples[n]
                 sumRe += s * cosI(ph)
                 sumIm -= s * sinI(ph)
                 ph = (ph + step) and (TABLE_SIZE - 1)
             }
-            mag[b] = sqrt((sumRe * sumRe + sumIm * sumIm).toDouble()).toInt() shr 14
-            phase[b] = ph
+            val magLong = sqrt(sumRe * sumRe + sumIm * sumIm.toDouble()).toInt() shr 15
+            val avgPhase = atan2(sumIm.toDouble(), sumRe.toDouble())
+            val phInt = ((avgPhase / (2 * Math.PI)) * TABLE_SIZE).roundToInt() and (TABLE_SIZE - 1)
+            mag[b] = magLong
+            phase[b] = phInt
         }
         return mag to phase
     }
