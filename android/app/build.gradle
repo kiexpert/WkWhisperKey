@@ -92,8 +92,3 @@ dependencies {
     testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.10.0"
 }
 
-tasks.create("wkTest", Test) {
-    description = "Run all Wk-prefixed unit tests"
-    useJUnitPlatform()
-    include("**/Wk*Test.class")
-}
