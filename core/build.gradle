@@ -10,3 +10,9 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<Test>("wkTest") {
+    description = "Run only Wk algorithm tests"
+    useJUnitPlatform()
+    include("**/WkBitwisePhaseSeparatorTest.class")
+}
