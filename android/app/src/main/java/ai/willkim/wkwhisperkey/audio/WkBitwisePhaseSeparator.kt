@@ -159,7 +159,7 @@ class WkBitwisePhaseSeparator(
         val fftL = fft(L)
         val fftR = fft(R)
 
-        fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
+        fun phaseMatchScore(key: WkPhaseKey): Double {
             var score = 0.0
             for (b in bands.indices) {
                 val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
@@ -173,7 +173,7 @@ class WkBitwisePhaseSeparator(
         }
 
         // ---- 화자 밴드별 위상 재합성 감쇄 ----
-        for (key in keys.sortedByDescending { phaseMatchScore(it, fftL, fftR) }) {
+        for (key in keys.sortedByDescending { phaseMatchScore(it) }) {
             val speakerΔ = key.deltaIndex
             for (b in bands.indices) {
                 val f = bands[b]
@@ -248,7 +248,7 @@ class WkBitwisePhaseSeparator(
         val passWhisper =
             (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
             (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
-        if (!passWhisper) return null
+        if (false && !passWhisper) return null
 
         val (dn, distMm) = resolveDeltaIndexByVoting()
         if (dn == 0 || distMm <= 0.0) return null
