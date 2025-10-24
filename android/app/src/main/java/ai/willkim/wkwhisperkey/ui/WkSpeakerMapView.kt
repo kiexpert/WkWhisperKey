@@ -56,6 +56,7 @@ class WkSpeakerMapView @JvmOverloads constructor(
     )
 
     // ----------------------------------------------------------
+    /*
     fun updateSpeakers(speakers: List<SpeakerSignal>, voiceKeys: List<VoiceKey>) {
         this.speakers = speakers
         this.allVoiceKeys = voiceKeys
@@ -78,7 +79,7 @@ class WkSpeakerMapView @JvmOverloads constructor(
         }
 
         invalidate()
-    }
+    } // */
 
     fun updateSpeakers(speakers: List<WkPhaseSignal>, voiceKeys: List<WkPhaseKey>) {
         this.speakers = speakers
