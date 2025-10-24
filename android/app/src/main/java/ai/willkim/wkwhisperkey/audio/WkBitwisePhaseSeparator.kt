@@ -7,12 +7,12 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkBitwisePhaseSeparator v2.0
+ * WkBitwisePhaseSeparator v2.1
  * ---------------------------------------------------------------
  * - 위상 재합성형 분리기 (Phase-Resynthesis Model)
- * - 각 밴드별 좌/우 위상 및 에너지 기록
- * - sin테이블 기반 위상파 재합성 후 역위상 소거(diff-phase cancel)
- * - 좌/우 비대칭 감쇠 (화자 거리 반영)
+ * - 밴드별 좌/우 위상 및 에너지 기록
+ * - sin 테이블 기반 위상파 재합성 후 역위상 소거(diff-phase cancel)
+ * - 위상 정합 기준(입 반지름 ±31샘플) 외 밴드는 무시
  * - 단일 API: separate(L: ShortArray, R: ShortArray)
  */
 data class WkPhaseKey(
@@ -59,6 +59,7 @@ class WkBitwisePhaseSeparator(
         private const val WHISPER_IDX2 = 4
         private const val TOP_BANDS_FOR_VOTE = 6
         private const val EXCLUDE_LOW_FREQ = 1
+        private const val MOUTH_RADIUS_BITS = 32  // ≈ ±31 샘플 허용
 
         // ---- 16bit SIN TABLE ----
         private const val TABLE_SIZE = 4096
@@ -74,8 +75,7 @@ class WkBitwisePhaseSeparator(
             return SIN_TABLE[idx] / Short.MAX_VALUE.toDouble()
         }
 
-        fun cosFromTable(phase: Double): Double =
-            sinFromTable(phase + Math.PI / 2)
+        fun cosFromTable(phase: Double): Double = sinFromTable(phase + Math.PI / 2)
 
         fun estimateMicDistanceMm(): Double {
             val context = WkApp.instance.applicationContext
@@ -97,6 +97,20 @@ class WkBitwisePhaseSeparator(
                 "UNFOLDED" -> 180.0
                 else -> 20.0
             }.coerceAtMost(MIC_DISTANCE_MAX_MM)
+        }
+
+        // ---- 위상 정합 여부 검사 (branchless) ----
+        private inline fun isPhaseMatchedInt(
+            bandΔ: Int, speakerΔ: Int, λ: Int, mouthRadiusBits: Int
+        ): Boolean {
+            val mask = mouthRadiusBits - 1
+            val n0 = abs(speakerΔ) / λ
+            var diffMask = 0
+            diffMask = diffMask or abs(bandΔ + n0 * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ - n0 * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ + (n0 + 1) * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ - (n0 + 1) * λ - speakerΔ)
+            return (diffMask and mask.inv()) == 0
         }
     }
 
@@ -142,30 +156,36 @@ class WkBitwisePhaseSeparator(
             R[i + PAD_SAMPLES] = Rsrc[i].toInt()
         }
 
-        // 🔹 위상 재합성 감쇄
+        // ---- 화자 밴드별 위상 재합성 감쇄 ----
         for (key in keys.sortedByDescending { it.energy }) {
-            val f = key.freq
-            val ω = 2.0 * Math.PI * f / sampleRate
-            val ampL = key.magL
-            val ampR = key.magR
-            val gainRatio = (ampL + 1e-9) / (ampR + 1e-9)
+            val speakerΔ = key.deltaIndex
+            for (b in bands.indices) {
+                val f = bands[b]
+                val λ = (sampleRate / f).roundToInt()
+                val bandΔ = (phaseDiff[b] * sampleRate / (2 * Math.PI * f)).roundToInt()
 
-            for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
-                val t = i.toDouble()
-                val waveL = sinFromTable(key.phaseL + ω * t)
-                val waveR = sinFromTable(key.phaseR + ω * t)
-                val cancelL = (ampL * waveL * 0.5 * (1.0 / (1.0 + gainRatio)))
-                val cancelR = (ampR * waveR * 0.5 * (1.0 / (1.0 + 1.0 / gainRatio)))
-                L[i] = (L[i] - cancelL).toInt()
-                R[i] = (R[i] - cancelR).toInt()
+                if (isPhaseMatchedInt(bandΔ, speakerΔ, λ, MOUTH_RADIUS_BITS)) {
+                    val ω = 2.0 * Math.PI * f / sampleRate
+                    val ampL = magL[b]
+                    val ampR = magR[b]
+                    val gainRatio = (ampL + 1e-9) / (ampR + 1e-9)
+                    for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
+                        val t = i.toDouble()
+                        val waveL = sinFromTable(phaseL[b] + ω * t)
+                        val waveR = sinFromTable(phaseR[b] + ω * t)
+                        val cancelL = (ampL * waveL * 0.5 * (1.0 / (1.0 + gainRatio)))
+                        val cancelR = (ampR * waveR * 0.5 * (1.0 / (1.0 + 1.0 / gainRatio)))
+                        L[i] = (L[i] - cancelL).toInt()
+                        R[i] = (R[i] - cancelR).toInt()
+                    }
+                }
             }
         }
 
-        // 🔹 RMS 계산
+        // ---- RMS ----
         var sumSq = 0L
         for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
-            val v = L[i]
-            sumSq += v * v
+            val v = L[i]; sumSq += v * v
         }
         val rms = sqrt(sumSq.toDouble() / N)
         val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
@@ -204,16 +224,13 @@ class WkBitwisePhaseSeparator(
             phaseR[i] = phR
             magL[i] = hypot(fftL[bin].real, fftL[bin].imag)
             magR[i] = hypot(fftR[bin].real, fftR[bin].imag)
-
             var dPhi = phR - phL
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
-
             phaseDiff[i] = dPhi
             val cancel = sinFromTable(dPhi)
             val common = (magL[i] + magR[i]) * 0.5 * cancel
             energyByBand[i] = abs(magL[i] - common)
-
             snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
             noiseFloor[i] =
                 (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
@@ -226,6 +243,16 @@ class WkBitwisePhaseSeparator(
 
         val (dn, distMm) = resolveDeltaIndexByVoting()
         if (dn == 0 || distMm <= 0.0) return null
+
+        // 비화자 밴드 제거
+        for (i in bands.indices) {
+            val f = bands[i]
+            val λ = (sampleRate / f).roundToInt()
+            val bandΔ = (phaseDiff[i] * sampleRate / (2 * Math.PI * f)).roundToInt()
+            if (!isPhaseMatchedInt(bandΔ, dn, λ, MOUTH_RADIUS_BITS)) {
+                magL[i] = 0.0; magR[i] = 0.0
+            }
+        }
 
         val maxIdx = energyByBand.indices.maxByOrNull { energyByBand[it] } ?: return null
         return WkPhaseKey(
@@ -244,7 +271,6 @@ class WkBitwisePhaseSeparator(
         val voteBands = order.drop(EXCLUDE_LOW_FREQ).take(TOP_BANDS_FOR_VOTE)
         val votes = mutableMapOf<Int, Double>()
         val contrib = mutableMapOf<Int, MutableList<Int>>()
-
         for (j in voteBands) {
             val fj = bands[j]
             val ph = phaseDiff[j]
@@ -257,22 +283,15 @@ class WkBitwisePhaseSeparator(
                 }
             }
         }
-
-        var bestDn = 0
-        var bestDist = 0.0
-        var bestVotes = 0
+        var bestDn = 0; var bestDist = 0.0; var bestVotes = 0
         for ((dn, _) in votes.entries.sortedByDescending { it.value }) {
             val count = contrib[dn]?.distinct()?.size ?: 0
             when {
                 count >= 3 -> {
-                    bestDn = dn
-                    bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
-                    break
+                    bestDn = dn; bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0; break
                 }
                 count >= 2 && bestVotes < 2 -> {
-                    bestDn = dn
-                    bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0
-                    bestVotes = count
+                    bestDn = dn; bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0; bestVotes = count
                 }
             }
         }
@@ -284,20 +303,14 @@ class WkBitwisePhaseSeparator(
         val merged = mutableListOf<WkPhaseKey>()
         for (n in new) {
             val near = old.find { abs(it.deltaIndex - n.deltaIndex) < MAX_CLUSTER_GAP }
-            if (near == null) {
-                merged += n
-                keyLastSeen[n.id] = 0
-            } else {
-                merged += n.copy(energy = (near.energy + n.energy) * 0.5)
-                keyLastSeen[near.id] = 0
-            }
+            if (near == null) { merged += n; keyLastSeen[n.id] = 0 }
+            else { merged += n.copy(energy = (near.energy + n.energy) * 0.5); keyLastSeen[near.id] = 0 }
         }
         for (o in old) {
             val age = (keyLastSeen[o.id] ?: 0) + 1
             val isWeak = o.energy < KEEPKEY_SNR_FACTOR * ENERGY_MIN_THRESHOLD
             if (age < DROP_THRESHOLD_FRAMES && !isWeak) {
-                merged += o.copy(energy = o.energy * ENERGY_DECAY_RATE)
-                keyLastSeen[o.id] = age
+                merged += o.copy(energy = o.energy * ENERGY_DECAY_RATE); keyLastSeen[o.id] = age
             } else keyLastSeen.remove(o.id)
         }
         return merged.sortedByDescending { it.energy }
@@ -310,9 +323,7 @@ class WkBitwisePhaseSeparator(
             var assigned = false
             for (grp in groups) {
                 val sim = energyPatternSimilarity(k, grp.first())
-                if (sim > ENERGY_SIM_THRESHOLD) {
-                    grp += k; assigned = true; break
-                }
+                if (sim > ENERGY_SIM_THRESHOLD) { grp += k; assigned = true; break }
             }
             if (!assigned) groups += mutableListOf(k)
         }
@@ -329,8 +340,7 @@ class WkBitwisePhaseSeparator(
         val aVec = doubleArrayOf(a.energy, a.freq)
         val bVec = doubleArrayOf(b.energy, b.freq)
         val dot = aVec.zip(bVec).sumOf { it.first * it.second }
-        val normA = sqrt(aVec.sumOf { it * it })
-        val normB = sqrt(bVec.sumOf { it * it })
+        val normA = sqrt(aVec.sumOf { it * it }); val normB = sqrt(bVec.sumOf { it * it })
         return dot / (normA * normB + 1e-9)
     }
 
@@ -360,6 +370,9 @@ class WkBitwisePhaseSeparator(
     }
 }
 
+// ------------------------------------------------------------
+// 싱글톤 샤드 인스턴스
+// ------------------------------------------------------------
 object WkBitwisePhaseSeparatorShard {
     val instance = WkBitwisePhaseSeparator(
         sampleRate = 44100,
