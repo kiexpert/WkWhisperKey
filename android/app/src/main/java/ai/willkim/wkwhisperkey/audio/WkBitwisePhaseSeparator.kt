@@ -173,7 +173,7 @@ class WkBitwisePhaseSeparator(
         }
 
         // ---- 화자 밴드별 위상 재합성 감쇄 ----
-        for (key in keys.sortedByDescending { phaseMatchScore(key, fftL, fftR) }) {
+        for (key in keys.sortedByDescending { phaseMatchScore(it, fftL, fftR) }) {
             val speakerΔ = key.deltaIndex
             for (b in bands.indices) {
                 val f = bands[b]
