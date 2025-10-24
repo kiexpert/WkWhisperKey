@@ -156,8 +156,8 @@ class WkBitwisePhaseSeparator(
             R[i + PAD_SAMPLES] = Rsrc[i].toInt()
         }
 
-        val fftL = fft(L.toDoubleArray())
-        val fftR = fft(R.toDoubleArray())
+        val fftL = fft(L)
+        val fftR = fft(R)
 
         fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
             var score = 0.0
