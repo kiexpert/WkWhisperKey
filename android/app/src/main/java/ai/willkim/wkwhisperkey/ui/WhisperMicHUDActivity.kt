@@ -17,15 +17,13 @@ import kotlin.math.*
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private val separator = WkVoiceSeparatorShard.instance
+    private val separator = WkBitwisePhaseSeparatorShard.instance
     private val main = Handler(Looper.getMainLooper())
 
     private val sampleRate = 44100
     private val frameMs = 20
     private val N = (sampleRate * frameMs / 1000.0).roundToInt()
     private val hop = N / 2
-    private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
-
     private val ring = ShortArray(4 * N)
     private var rp = 0
     private var filled = 0
@@ -36,7 +34,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ---------- FrameLayout 루트 ----------
         val root = FrameLayout(this)
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -44,7 +41,7 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "🎤 멀티발성키 화자분리 뷰"
+            text = "🎤 비트화 위상 분리기 뷰"
             textSize = 18f
             gravity = Gravity.CENTER_HORIZONTAL
         }
@@ -60,7 +57,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
         root.addView(mainLayout)
 
-        // ---------- 프로파일러 오버레이 ----------
         val profiler = WkProfilerView(this).apply {
             setBackgroundColor(Color.argb(120, 0, 0, 0))
             setPadding(8, 4, 8, 4)
@@ -102,27 +98,27 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     }
 
     private fun processFrame() {
-        val L = DoubleArray(N)
-        val R = DoubleArray(N)
+        val Lshort = ShortArray(N)
+        val Rshort = ShortArray(N)
         var idx = (rp - 2 * N + ring.size) % ring.size
         var j = 0
         while (j < 2 * N) {
-            val l = ring[idx].toInt(); idx = (idx + 1) % ring.size
-            val r = ring[idx].toInt(); idx = (idx + 1) % ring.size
-            L[j / 2] = l.toDouble()
-            R[j / 2] = r.toDouble()
+            val l = ring[idx]; idx = (idx + 1) % ring.size
+            val r = ring[idx]; idx = (idx + 1) % ring.size
+            Lshort[j / 2] = l
+            Rshort[j / 2] = r
             j += 2
         }
 
         try {
-            val speakers = separator.separate(L, R)
+            val speakers = separator.separate(Lshort, Rshort)
             val sorted = speakers.sortedByDescending { it.energy }.take(7)
             val sb = StringBuilder()
             sb.append("감지된 화자 수: ${speakers.size}\n")
             for ((i, s) in sorted.withIndex()) {
                 sb.append(
                     String.format(
-                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2fm\n",
+                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2f mm\n",
                         i + 1, s.energy, s.deltaIndex, s.distance
                     )
                 )
@@ -152,7 +148,6 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         WkSafetyMonitor.stop()
     }
 
-    // ---------- 내부 프로파일러 ----------
     class WkProfilerView(context: Context) : TextView(context), Choreographer.FrameCallback {
         private var lastTime = System.nanoTime()
         private var frameCount = 0
