@@ -141,7 +141,7 @@ class WkBitwisePhaseSeparator(
     }
 
     // ------------------------------------------------------------
-    fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
+    private fun phaseMatchScore(key: WkPhaseKey, fftL: Array<Complex>, fftR: Array<Complex>): Double {
         var score = 0.0
         for (b in bands.indices) {
             val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
