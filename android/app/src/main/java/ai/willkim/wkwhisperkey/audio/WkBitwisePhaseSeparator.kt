@@ -220,11 +220,6 @@ class WkBitwisePhaseSeparator(
     private fun detectVoiceKey(L: IntArray, R: IntArray): WkPhaseKey? {
         val N = L.size
         val Npad = N + PAD_SAMPLES * 2
-        for (i in 0 until N) {
-            dL[i + PAD_SAMPLES] = L[i].toDouble()
-            dR[i + PAD_SAMPLES] = R[i].toDouble()
-        }
-
         val fftL = fft(L)
         val fftR = fft(R)
         val micDistMm = estimateMicDistanceMm()
