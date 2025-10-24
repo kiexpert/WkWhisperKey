@@ -147,13 +147,13 @@ class WkBitwisePhaseSeparator(
         keys: List<WkPhaseKey>
     ): Triple<List<WkPhaseSignal>, IntArray, IntArray> {
 
-        val N = Lsrc.size
-        val Npad = N + PAD_SAMPLES * 2
+        val Npad = Lsrc.size
+        val N = Npad - PAD_SAMPLES * 2
         val L = IntArray(Npad)
         val R = IntArray(Npad)
-        for (i in 0 until N) {
-            L[i + PAD_SAMPLES] = Lsrc[i].toInt()
-            R[i + PAD_SAMPLES] = Rsrc[i].toInt()
+        for (i in 0 until Npad) {
+            L[i] = Lsrc[i].toInt()
+            R[i] = Rsrc[i].toInt()
         }
 
         val fftL = fft(L)
@@ -187,12 +187,13 @@ class WkBitwisePhaseSeparator(
                     val gainRatio = (ampL + 1e-9) / (ampR + 1e-9)
                     for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
                         val t = i.toDouble()
+                        val j = i + speakerΔ
                         val waveL = sinFromTable(phaseL[b] + ω * t)
                         val waveR = sinFromTable(phaseR[b] + ω * t)
                         val cancelL = (ampL * waveL * 0.5 * (1.0 / (1.0 + gainRatio)))
                         val cancelR = (ampR * waveR * 0.5 * (1.0 / (1.0 + 1.0 / gainRatio)))
                         L[i] = (L[i] - cancelL).toInt()
-                        R[i] = (R[i] - cancelR).toInt()
+                        R[j] = (R[j] - cancelR).toInt()
                     }
                 }
             }
