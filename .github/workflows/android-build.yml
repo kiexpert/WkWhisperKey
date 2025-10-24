@@ -81,7 +81,7 @@ jobs:
       - name: 🧪 Run Unit Tests
         run: |
           set -e
-          ./gradlew --no-daemon test --stacktrace | tee test.log
+          ./gradlew --no-daemon wkTest --stacktrace | tee test.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [[ $EXIT_CODE -ne 0 ]]; then
             echo "Unit tests failed with exit code $EXIT_CODE"
