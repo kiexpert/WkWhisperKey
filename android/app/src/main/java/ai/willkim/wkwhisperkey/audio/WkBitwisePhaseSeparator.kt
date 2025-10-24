@@ -7,12 +7,12 @@ import ai.willkim.wkwhisperkey.WkApp
 import kotlin.math.*
 
 /**
- * WkBitwisePhaseSeparator v2.1
+ * WkBitwisePhaseSeparator v2.2 (IntArray FFT optimized)
  * ---------------------------------------------------------------
- * - 위상 재합성형 분리기 (Phase-Resynthesis Model)
- * - 밴드별 좌/우 위상 및 에너지 기록
- * - sin 테이블 기반 위상파 재합성 후 역위상 소거(diff-phase cancel)
- * - 위상 정합 기준(입 반지름 ±31샘플) 외 밴드는 무시
+ * - Complex 객체 제거, in-place FFT(IntArray 기반)
+ * - 밴드별 좌/우 위상 및 에너지 계산
+ * - sin 테이블 기반 위상 재합성 및 역위상 소거
+ * - 위상 정합 기준(입 반지름 ±31샘플) 외 밴드 무시
  * - 단일 API: separate(L: ShortArray, R: ShortArray)
  */
 data class WkPhaseKey(
@@ -59,9 +59,9 @@ class WkBitwisePhaseSeparator(
         private const val WHISPER_IDX2 = 4
         private const val TOP_BANDS_FOR_VOTE = 6
         private const val EXCLUDE_LOW_FREQ = 1
-        private const val MOUTH_RADIUS_BITS = 32  // ≈ ±31 샘플 허용
+        private const val MOUTH_RADIUS_BITS = 32 // ±31 샘플 허용
 
-        // ---- 16bit SIN TABLE ----
+        // ---- SIN TABLE ----
         private const val TABLE_SIZE = 4096
         private val SIN_TABLE = ShortArray(TABLE_SIZE).apply {
             for (i in indices) {
@@ -99,7 +99,7 @@ class WkBitwisePhaseSeparator(
             }.coerceAtMost(MIC_DISTANCE_MAX_MM)
         }
 
-        // ---- 위상 정합 여부 검사 (branchless) ----
+        // ---- 위상 정합 검사 ----
         private inline fun isPhaseMatchedInt(
             bandΔ: Int, speakerΔ: Int, λ: Int, mouthRadiusBits: Int
         ): Boolean {
@@ -131,9 +131,9 @@ class WkBitwisePhaseSeparator(
     fun getActiveKeys(): List<WkPhaseKey> = activeKeys.toList()
 
     // ------------------------------------------------------------
-    fun separate(L: ShortArray, R: ShortArray): List<WkPhaseSignal> {
+    fun separate(Lsrc: ShortArray, Rsrc: ShortArray): List<WkPhaseSignal> {
         val preKeys = activeKeys.toList()
-        val (preSpk, resL, resR) = preprocess(L, R, preKeys)
+        val (preSpk, resL, resR) = preprocess(Lsrc, Rsrc, preKeys)
         detectVoiceKey(resL, resR)?.let {
             activeKeys = mergeKeys(preKeys, listOf(it)).toMutableList()
         }
@@ -149,37 +149,31 @@ class WkBitwisePhaseSeparator(
 
         val Npad = Lsrc.size
         val N = Npad - PAD_SAMPLES * 2
-        val L = IntArray(Npad)
-        val R = IntArray(Npad)
-        for (i in 0 until Npad) {
-            L[i] = Lsrc[i].toInt()
-            R[i] = Rsrc[i].toInt()
-        }
+        val L = IntArray(Npad) { Lsrc[it].toInt() }
+        val R = IntArray(Npad) { Rsrc[it].toInt() }
 
-        val fftL = fft(L)
-        val fftR = fft(R)
+        val (reL, imL) = fftInt(L.copyOf())
+        val (reR, imR) = fftInt(R.copyOf())
 
         fun phaseMatchScore(key: WkPhaseKey): Double {
             var score = 0.0
             for (b in bands.indices) {
                 val bin = (bands[b] / (sampleRate / L.size.toDouble())).toInt()
-                val φL = atan2(fftL[bin].imag, fftL[bin].real)
-                val φR = atan2(fftR[bin].imag, fftR[bin].real)
+                val φL = atan2(imL[bin].toDouble(), reL[bin].toDouble())
+                val φR = atan2(imR[bin].toDouble(), reR[bin].toDouble())
                 val predicted = key.phaseR - key.phaseL
-                val diff = φR - φL - predicted
-                score += cos(diff)
+                score += cos(φR - φL - predicted)
             }
             return score / bands.size
         }
 
-        // ---- 화자 밴드별 위상 재합성 감쇄 ----
+        // 위상 정합 기반 감쇄
         for (key in keys.sortedByDescending { phaseMatchScore(it) }) {
             val speakerΔ = key.deltaIndex
             for (b in bands.indices) {
                 val f = bands[b]
                 val λ = (sampleRate / f).roundToInt()
                 val bandΔ = (phaseDiff[b] * sampleRate / (2 * Math.PI * f)).roundToInt()
-
                 if (isPhaseMatchedInt(bandΔ, speakerΔ, λ, MOUTH_RADIUS_BITS)) {
                     val ω = 2.0 * Math.PI * f / sampleRate
                     val ampL = magL[b]
@@ -187,11 +181,11 @@ class WkBitwisePhaseSeparator(
                     val gainRatio = (ampL + 1e-9) / (ampR + 1e-9)
                     for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
                         val t = i.toDouble()
-                        val j = i + speakerΔ
+                        val j = (i + speakerΔ).coerceIn(0, L.lastIndex)
                         val waveL = sinFromTable(phaseL[b] + ω * t)
                         val waveR = sinFromTable(phaseR[b] + ω * t)
-                        val cancelL = (ampL * waveL * 0.5 * (1.0 / (1.0 + gainRatio)))
-                        val cancelR = (ampR * waveR * 0.5 * (1.0 / (1.0 + 1.0 / gainRatio)))
+                        val cancelL = (ampL * waveL * 0.5 / (1.0 + gainRatio))
+                        val cancelR = (ampR * waveR * 0.5 / (1.0 + 1.0 / gainRatio))
                         L[i] = (L[i] - cancelL).toInt()
                         R[j] = (R[j] - cancelR).toInt()
                     }
@@ -199,11 +193,9 @@ class WkBitwisePhaseSeparator(
             }
         }
 
-        // ---- RMS ----
+        // RMS 계산
         var sumSq = 0L
-        for (i in PAD_SAMPLES until PAD_SAMPLES + N) {
-            val v = L[i]; sumSq += v * v
-        }
+        for (i in PAD_SAMPLES until PAD_SAMPLES + N) sumSq += L[i] * L[i]
         val rms = sqrt(sumSq.toDouble() / N)
         val eDb = 20 * log10(rms / DEFAULT_ENERGY_NORM + ENERGY_MIN_THRESHOLD) + BASE_ENERGY_OFFSET_DB
 
@@ -219,21 +211,20 @@ class WkBitwisePhaseSeparator(
 
     // ------------------------------------------------------------
     private fun detectVoiceKey(L: IntArray, R: IntArray): WkPhaseKey? {
-        val N = L.size
-        val Npad = N + PAD_SAMPLES * 2
-        val fftL = fft(L)
-        val fftR = fft(R)
+        val (reL, imL) = fftInt(L.copyOf())
+        val (reR, imR) = fftInt(R.copyOf())
         val micDistMm = estimateMicDistanceMm()
+        val N = L.size
 
         for (i in bands.indices) {
             val f = bands[i]
-            val bin = (f / (sampleRate / Npad.toDouble())).roundToInt().coerceIn(0, Npad - 1)
-            val phL = atan2(fftL[bin].imag, fftL[bin].real)
-            val phR = atan2(fftR[bin].imag, fftR[bin].real)
+            val bin = (f / (sampleRate / N.toDouble())).roundToInt().coerceIn(0, N - 1)
+            val phL = atan2(imL[bin].toDouble(), reL[bin].toDouble())
+            val phR = atan2(imR[bin].toDouble(), reR[bin].toDouble())
             phaseL[i] = phL
             phaseR[i] = phR
-            magL[i] = hypot(fftL[bin].real, fftL[bin].imag)
-            magR[i] = hypot(fftR[bin].real, fftR[bin].imag)
+            magL[i] = hypot(reL[bin].toDouble(), imL[bin].toDouble())
+            magR[i] = hypot(reR[bin].toDouble(), imR[bin].toDouble())
             var dPhi = phR - phL
             if (dPhi > Math.PI) dPhi -= 2 * Math.PI
             if (dPhi < -Math.PI) dPhi += 2 * Math.PI
@@ -242,27 +233,11 @@ class WkBitwisePhaseSeparator(
             val common = (magL[i] + magR[i]) * 0.5 * cancel
             energyByBand[i] = abs(magL[i] - common)
             snrByBand[i] = energyByBand[i] / noiseFloor[i].coerceAtLeast(1e-9)
-            noiseFloor[i] =
-                (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
+            noiseFloor[i] = (1 - NOISE_EMA_ALPHA) * noiseFloor[i] + NOISE_EMA_ALPHA * energyByBand[i]
         }
-
-        val passWhisper =
-            (snrByBand[WHISPER_IDX1] > NEWKEY_SNR_FACTOR) ||
-            (snrByBand[WHISPER_IDX2] > NEWKEY_SNR_FACTOR)
-        if (false && !passWhisper) return null
 
         val (dn, distMm) = resolveDeltaIndexByVoting()
         if (dn == 0 || distMm <= 0.0) return null
-
-        // 비화자 밴드 제거
-        for (i in bands.indices) {
-            val f = bands[i]
-            val λ = (sampleRate / f).roundToInt()
-            val bandΔ = (phaseDiff[i] * sampleRate / (2 * Math.PI * f)).roundToInt()
-            if (!isPhaseMatchedInt(bandΔ, dn, λ, MOUTH_RADIUS_BITS)) {
-                magL[i] = 0.0; magR[i] = 0.0
-            }
-        }
 
         val maxIdx = energyByBand.indices.maxByOrNull { energyByBand[it] } ?: return null
         return WkPhaseKey(
@@ -274,120 +249,50 @@ class WkBitwisePhaseSeparator(
     }
 
     // ------------------------------------------------------------
-    private fun resolveDeltaIndexByVoting(): Pair<Int, Double> {
-        val maxDelaySamples =
-            (MIC_DISTANCE_MAX_MM / 1000.0 / SPEED_OF_SOUND * sampleRate).roundToInt()
-        val order = (bands.indices).sortedByDescending { energyByBand[it] }
-        val voteBands = order.drop(EXCLUDE_LOW_FREQ).take(TOP_BANDS_FOR_VOTE)
-        val votes = mutableMapOf<Int, Double>()
-        val contrib = mutableMapOf<Int, MutableList<Int>>()
-        for (j in voteBands) {
-            val fj = bands[j]
-            val ph = phaseDiff[j]
-            for (m in -2..2) {
-                val dn = ((ph + 2 * Math.PI * m) / (2 * Math.PI * fj) * sampleRate).roundToInt()
-                if (abs(dn) <= maxDelaySamples) {
-                    val w = max(energyByBand[j], 1e-12)
-                    votes[dn] = (votes[dn] ?: 0.0) + w
-                    contrib.getOrPut(dn) { mutableListOf() }.add(j)
-                }
+    private fun fftInt(
+        re: IntArray,
+        im: IntArray = IntArray(re.size),
+        shift: Int = 14
+    ): Pair<IntArray, IntArray> {
+        val n = re.size
+        var j = 0
+        for (i in 1 until n - 1) {
+            var bit = n shr 1
+            while (j >= bit) { j -= bit; bit = bit shr 1 }
+            j += bit
+            if (i < j) {
+                val tr = re[i]; re[i] = re[j]; re[j] = tr
+                val ti = im[i]; im[i] = im[j]; im[j] = ti
             }
         }
-        var bestDn = 0; var bestDist = 0.0; var bestVotes = 0
-        for ((dn, _) in votes.entries.sortedByDescending { it.value }) {
-            val count = contrib[dn]?.distinct()?.size ?: 0
-            when {
-                count >= 3 -> {
-                    bestDn = dn; bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0; break
-                }
-                count >= 2 && bestVotes < 2 -> {
-                    bestDn = dn; bestDist = abs(dn) / sampleRate.toDouble() * SPEED_OF_SOUND * 1000.0; bestVotes = count
+        var len = 2
+        while (len <= n) {
+            val step = (2 * Math.PI / len)
+            val wlenRe = (cos(step) * (1 shl shift)).toInt()
+            val wlenIm = (sin(step) * (1 shl shift)).toInt()
+            for (i in 0 until n step len) {
+                var wRe = (1 shl shift)
+                var wIm = 0
+                for (k in 0 until len / 2) {
+                    val uRe = re[i + k]
+                    val uIm = im[i + k]
+                    val vRe = ((re[i + k + len / 2] * wRe - im[i + k + len / 2] * wIm) shr shift)
+                    val vIm = ((re[i + k + len / 2] * wIm + im[i + k + len / 2] * wRe) shr shift)
+                    re[i + k] = uRe + vRe
+                    im[i + k] = uIm + vIm
+                    re[i + k + len / 2] = uRe - vRe
+                    im[i + k + len / 2] = uIm - vIm
+                    val tmpRe = ((wRe * wlenRe - wIm * wlenIm) shr shift)
+                    val tmpIm = ((wRe * wlenIm + wIm * wlenRe) shr shift)
+                    wRe = tmpRe; wIm = tmpIm
                 }
             }
+            len = len shl 1
         }
-        return bestDn to bestDist
-    }
-
-    // ------------------------------------------------------------
-    private fun mergeKeys(old: List<WkPhaseKey>, new: List<WkPhaseKey>): List<WkPhaseKey> {
-        val merged = mutableListOf<WkPhaseKey>()
-        for (n in new) {
-            val near = old.find { abs(it.deltaIndex - n.deltaIndex) < MAX_CLUSTER_GAP }
-            if (near == null) { merged += n; keyLastSeen[n.id] = 0 }
-            else { merged += n.copy(energy = (near.energy + n.energy) * 0.5); keyLastSeen[near.id] = 0 }
-        }
-        for (o in old) {
-            val age = (keyLastSeen[o.id] ?: 0) + 1
-            val isWeak = o.energy < KEEPKEY_SNR_FACTOR * ENERGY_MIN_THRESHOLD
-            if (age < DROP_THRESHOLD_FRAMES && !isWeak) {
-                merged += o.copy(energy = o.energy * ENERGY_DECAY_RATE); keyLastSeen[o.id] = age
-            } else keyLastSeen.remove(o.id)
-        }
-        return merged.sortedByDescending { it.energy }
-    }
-
-    // ------------------------------------------------------------
-    private fun clusterByEnergyPattern(keys: List<WkPhaseKey>): List<WkPhaseSignal> {
-        val groups = mutableListOf<MutableList<WkPhaseKey>>()
-        for (k in keys) {
-            var assigned = false
-            for (grp in groups) {
-                val sim = energyPatternSimilarity(k, grp.first())
-                if (sim > ENERGY_SIM_THRESHOLD) { grp += k; assigned = true; break }
-            }
-            if (!assigned) groups += mutableListOf(k)
-        }
-        return groups.map { grp ->
-            val id = nextSpeakerId++
-            val avgE = grp.map { it.energy }.average()
-            val avgΔ = grp.map { it.deltaIndex }.average().roundToInt()
-            val avgD = grp.map { it.distanceMm }.average()
-            WkPhaseSignal(id, grp, avgE, avgΔ, avgD)
-        }
-    }
-
-    private fun energyPatternSimilarity(a: WkPhaseKey, b: WkPhaseKey): Double {
-        val aVec = doubleArrayOf(a.energy, a.freq)
-        val bVec = doubleArrayOf(b.energy, b.freq)
-        val dot = aVec.zip(bVec).sumOf { it.first * it.second }
-        val normA = sqrt(aVec.sumOf { it * it }); val normB = sqrt(bVec.sumOf { it * it })
-        return dot / (normA * normB + 1e-9)
-    }
-
-    // ------------------------------------------------------------
-    private fun fft(x: IntArray): Array<Complex> {
-        val N = x.size
-        if (N <= 1) return arrayOf(Complex(x[0].toDouble(), 0.0))
-    
-        val half = N / 2
-        val even = IntArray(half) { x[it * 2] }
-        val odd = IntArray(half) { x[it * 2 + 1] }
-    
-        val fftEven = fft(even)
-        val fftOdd = fft(odd)
-    
-        val result = Array(N) { Complex(0.0, 0.0) }
-        for (k in 0 until half) {
-            val t = Complex.polar(1.0, -2 * Math.PI * k / N) * fftOdd[k]
-            result[k] = fftEven[k] + t
-            result[k + half] = fftEven[k] - t
-        }
-        return result
-    }
-
-    private data class Complex(val real: Double, val imag: Double) {
-        operator fun plus(o: Complex) = Complex(real + o.real, imag + o.imag)
-        operator fun minus(o: Complex) = Complex(real - o.real, imag - o.imag)
-        operator fun times(o: Complex) =
-            Complex(real * o.real - imag * o.imag, real * o.imag + imag * o.real)
-        companion object {
-            fun polar(r: Double, theta: Double) = Complex(r * cos(theta), r * sin(theta))
-        }
+        return re to im
     }
 }
 
-// ------------------------------------------------------------
-// 싱글톤 샤드 인스턴스
 // ------------------------------------------------------------
 object WkBitwisePhaseSeparatorShard {
     val instance = WkBitwisePhaseSeparator(
