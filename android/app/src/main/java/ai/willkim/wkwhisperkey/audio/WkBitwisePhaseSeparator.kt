@@ -221,15 +221,13 @@ class WkBitwisePhaseSeparator(
     private fun detectVoiceKey(L: IntArray, R: IntArray): WkPhaseKey? {
         val N = L.size
         val Npad = N + PAD_SAMPLES * 2
-        val dL = DoubleArray(Npad)
-        val dR = DoubleArray(Npad)
         for (i in 0 until N) {
             dL[i + PAD_SAMPLES] = L[i].toDouble()
             dR[i + PAD_SAMPLES] = R[i].toDouble()
         }
 
-        val fftL = fft(dL)
-        val fftR = fft(dR)
+        val fftL = fft(L)
+        val fftR = fft(R)
         val micDistMm = estimateMicDistanceMm()
 
         for (i in bands.indices) {
@@ -362,16 +360,22 @@ class WkBitwisePhaseSeparator(
     }
 
     // ------------------------------------------------------------
-    private fun fft(x: DoubleArray): Array<Complex> {
+    private fun fft(x: IntArray): Array<Complex> {
         val N = x.size
-        if (N <= 1) return arrayOf(Complex(x[0], 0.0))
-        val even = fft(x.filterIndexed { i, _ -> i % 2 == 0 }.toDoubleArray())
-        val odd = fft(x.filterIndexed { i, _ -> i % 2 == 1 }.toDoubleArray())
+        if (N <= 1) return arrayOf(Complex(x[0].toDouble(), 0.0))
+    
+        val half = N / 2
+        val even = IntArray(half) { x[it * 2] }
+        val odd = IntArray(half) { x[it * 2 + 1] }
+    
+        val fftEven = fft(even)
+        val fftOdd = fft(odd)
+    
         val result = Array(N) { Complex(0.0, 0.0) }
-        for (k in 0 until N / 2) {
-            val t = Complex.polar(1.0, -2 * Math.PI * k / N) * odd[k]
-            result[k] = even[k] + t
-            result[k + N / 2] = even[k] - t
+        for (k in 0 until half) {
+            val t = Complex.polar(1.0, -2 * Math.PI * k / N) * fftOdd[k]
+            result[k] = fftEven[k] + t
+            result[k + half] = fftEven[k] - t
         }
         return result
     }
