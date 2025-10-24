@@ -4,8 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
-import ai.willkim.wkwhisperkey.audio.SpeakerSignal
-import ai.willkim.wkwhisperkey.audio.VoiceKey
+import ai.willkim.wkwhisperkey.audio.*
 import kotlin.math.*
 
 /**
@@ -53,6 +52,30 @@ class WkSpeakerMapView @JvmOverloads constructor(
 
     // ----------------------------------------------------------
     fun updateSpeakers(speakers: List<SpeakerSignal>, voiceKeys: List<VoiceKey>) {
+        this.speakers = speakers
+        this.allVoiceKeys = voiceKeys
+
+        // 🔹 UI 좌표 매핑 수행 (에너지 기반 포물선 곡면)
+        if (voiceKeys.isNotEmpty()) {
+            val eMax = voiceKeys.maxOf { it.energy }
+            val eMin = voiceKeys.minOf { it.energy }
+            val eRange = (eMax - eMin).coerceAtLeast(1e-9)
+
+            for (key in allVoiceKeys) {
+                val eNorm = ((key.energy - eMin) / eRange).coerceIn(0.0, 1.0)
+                val dNorm = (key.distanceMm / MAX_DRAW_RADIUS_MM).coerceIn(0.0, 1.0)
+                // 포물선형 거리 보정: 에너지가 작을수록 곡선 바깥으로
+                val curvedR = (dNorm * dNorm) * MAX_DRAW_RADIUS_MM * (1.0 - eNorm) + eNorm * 20.0
+                val theta = (key.deltaIndex / 600.0).coerceIn(-1.0, 1.0) * (Math.PI / 2)
+                key.energyPosX = 250.0 + sin(theta) * curvedR
+                key.energyPosY = 250.0 + cos(theta) * curvedR
+            }
+        }
+
+        invalidate()
+    }
+
+    fun updateSpeakers(speakers: List<WkPhaseSignal>, voiceKeys: List<WkPhaseKey>) {
         this.speakers = speakers
         this.allVoiceKeys = voiceKeys
 
