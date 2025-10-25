@@ -71,12 +71,22 @@ jobs:
       - name: 🚀 Build Android Debug APK
         run: |
           set -e
-          #./gradlew clean | tee build.log && exit 1
           ./gradlew --no-daemon :android:app:assembleDebug | tee build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          if [[ $EXIT_CODE -eq 0 ]]; then exit 0; fi
-          echo "Gradle build failed with exit code $EXIT_CODE"
-          exit $EXIT_CODE
+          if [[ $EXIT_CODE -ne 0 ]]; then
+            echo "Gradle build failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - name: 🧪 Run Unit Tests
+        run: |
+          set -e
+          ./gradlew --no-daemon :core:test --stacktrace | tee test.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [[ $EXIT_CODE -ne 0 ]]; then
+            echo "Unit tests failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
 
       # ────────────── 9️⃣ Upload artifact ──────────────
       - name: 📦 Upload APK

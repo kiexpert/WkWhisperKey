@@ -7,3 +7,5 @@ pluginManagement {
 }
 rootProject.name = "WkWhisperKey"
 include ':android:app'
+include(":core")
+project(":core").projectDir = file("core")
