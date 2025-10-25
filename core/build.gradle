@@ -6,7 +6,20 @@ repositories {
     mavenCentral()
 }
 
+configurations.all {
+    exclude group: "org.jetbrains.kotlin", module: "kotlin-test-junit"
+    exclude group: "org.jetbrains.kotlin", module: "kotlin-test-junit5"
+}
+
 dependencies {
-    testImplementation "org.jetbrains.kotlin:kotlin-test"       // 공통
-    testImplementation "org.jetbrains.kotlin:kotlin-test-junit5" // JUnit5 전용
+    implementation "org.jetbrains.kotlin:kotlin-stdlib"
+
+    // ✅ JUnit5만 사용 (권장)
+    testImplementation "org.jetbrains.kotlin:kotlin-test"
+    testImplementation "org.junit.jupiter:junit-jupiter-api:5.10.0"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.10.0"
+}
+
+tasks.withType(Test) {
+    useJUnitPlatform()
 }
