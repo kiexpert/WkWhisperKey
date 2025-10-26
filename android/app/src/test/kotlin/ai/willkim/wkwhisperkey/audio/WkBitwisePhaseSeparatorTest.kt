@@ -129,14 +129,56 @@ class WkBitwisePhaseSeparatorTest {
 
     // ------------------------------------------------------------
     @Test
-    fun `위상정합 함수가 입 반지름 허용범위 내에서만 true여야 함`() {
+    fun `위상정합 함수는 입 반지름 허용범위 내에서만 true를 반환해야 함`() {
         val f = WkBitwisePhaseSeparator.Companion
         val λ = 63
-        assertTrue(f.isPhaseMatchedInt(10, 10, λ, 32))
-        assertTrue(f.isPhaseMatchedInt(42, 42, λ, 32))
-        assertFalse(f.isPhaseMatchedInt(100, 10, λ, 32))
+        val mouthBits = 8  // ±7샘플 허용 (입의 반지름에 해당)
+    
+        // ✅ 정상 허용 범위 내
+        assertTrue(
+            f.isPhaseMatchedInt(10, 10, λ, mouthBits),
+            "동일 위치(10,10)는 항상 true여야 함"
+        )
+    
+        assertTrue(
+            f.isPhaseMatchedInt(λ, 0, λ, mouthBits),
+            "한 파장 래핑(λ,0)은 true여야 함"
+        )
+    
+        assertTrue(
+            f.isPhaseMatchedInt(-λ, 0, λ, mouthBits),
+            "역방향 한 파장 래핑(-λ,0)도 true여야 함"
+        )
+    
+        // ❌ 입 반지름 허용치 초과
+        assertFalse(
+            f.isPhaseMatchedInt(3 * λ + 10, 0, λ, mouthBits),
+            "3λ+10 차이는 입 허용반경을 초과하므로 false여야 함"
+        )
+    
+        assertFalse(
+            f.isPhaseMatchedInt(100, 10, λ, mouthBits),
+            "100과 10의 차이는 λ/2 이상이므로 false여야 함"
+        )
     }
-
+    
+    @Test
+    fun `λ 단위 위상 래핑이 정확히 반영되어야 함`() {
+        val λ = 63
+        val cases = listOf(
+            0 to 0,            // 완전 일치 → true
+            λ to 0,            // 한 파장 래핑 → true
+            -λ to 0,           // 반대방향 한 파장 래핑 → true
+            2*λ to 0,          // 두 바퀴 차이 → true
+            3*λ + 10 to 0      // 세 바퀴 이상 → false
+        )
+        for ((bandΔ, speakerΔ) in cases) {
+            val result = WkBitwisePhaseSeparator.Companion
+                .isPhaseMatchedInt(bandΔ, speakerΔ, λ, 32)
+            println("bandΔ=$bandΔ, speakerΔ=$speakerΔ → $result")
+        }
+    }
+    
     // ------------------------------------------------------------
     @Test
     fun `전체 분리 파이프라인이 크래시 없이 동작해야 함`() {
