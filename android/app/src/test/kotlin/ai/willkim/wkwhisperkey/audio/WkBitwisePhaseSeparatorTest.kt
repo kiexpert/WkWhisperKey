@@ -96,29 +96,59 @@ class WkBitwisePhaseSeparatorTest {
         val samples = IntArray(N) {
             (sin(2 * Math.PI * freq * it / sampleRate) * 16000).toInt()
         }
-
+    
         val method = separator::class.java.getDeclaredMethod("dft8", IntArray::class.java)
         method.isAccessible = true
         val result = method.invoke(separator, samples)
         require(result is Pair<*, *>) { "dft8() 반환형이 Pair가 아닙니다" }
-
+    
         @Suppress("UNCHECKED_CAST")
         val pair = result as Pair<IntArray, IntArray>
         val magDFT = pair.first
-
+    
         val (magFFT, _) = WkIntFFT.fftInt(samples)
         val dftPower = sqrt(magDFT.sumOf { it * it.toDouble() } / magDFT.size)
         val fftPower = sqrt(magFFT.sumOf { it * it } / magFFT.size)
         val ratio = dftPower / fftPower
-        assertTrue(ratio in 0.3..3.0, "FFT/DFT 진폭 비율 불일치 ($ratio)")
+    
+        println("---- FFT vs DFT DEBUG ----")
+        println("freq=$freq, N=$N")
+        println("magDFT=${magDFT.joinToString(prefix=\"[\", postfix=\"]\", limit=8)} ...")
+        println("magFFT(first 8)=${magFFT.take(8)}")
+        println("dftPower=$dftPower  fftPower=$fftPower  ratio=$ratio")
+    
+        assertTrue(ratio in 0.3..3.0, "FFT/DFT 진폭 스케일 불일치 ($ratio)")
     }
-
+    
     @Test
     fun `위상정합 함수는 입 반지름 허용범위 내에서만 true를 반환해야 함`() {
         val f = WkBitwisePhaseSeparator.Companion
         val λ = 63
         val mouthBits = 8
-        //assertTrue(f.isPhaseMatchedInt(10, 10, λ, mouthBits))
+    
+        fun debugCheck(bandΔ: Int, speakerΔ: Int) {
+            val result = f.isPhaseMatchedInt(bandΔ, speakerΔ, λ, mouthBits)
+            val mask = mouthBits - 1
+            val n0 = abs(speakerΔ) / λ
+            var diffMask = 0
+            diffMask = diffMask or abs(bandΔ + n0 * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ - n0 * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ + (n0 + 1) * λ - speakerΔ)
+            diffMask = diffMask or abs(bandΔ - (n0 + 1) * λ - speakerΔ)
+            println(
+                "bandΔ=$bandΔ  speakerΔ=$speakerΔ  λ=$λ  mask=${mask.inv().toString(2)}  " +
+                "diffMask=$diffMask  → result=$result"
+            )
+        }
+    
+        println("---- PHASE MATCH DEBUG ----")
+        debugCheck(10, 10)
+        debugCheck(λ, 0)
+        debugCheck(-λ, 0)
+        debugCheck(3 * λ + 10, 0)
+        debugCheck(100, 10)
+    
+        assertTrue(f.isPhaseMatchedInt(10, 10, λ, mouthBits))
         assertTrue(f.isPhaseMatchedInt(λ, 0, λ, mouthBits))
         assertTrue(f.isPhaseMatchedInt(-λ, 0, λ, mouthBits))
         assertFalse(f.isPhaseMatchedInt(3 * λ + 10, 0, λ, mouthBits))
