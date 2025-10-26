@@ -79,8 +79,11 @@ class WkBitwisePhaseSeparatorTest {
         method.isAccessible = true
         val result = method.invoke(separator, samples)
         require(result is Pair<*, *>) { "dft8() 반환형이 Pair가 아닙니다" }
+
         @Suppress("UNCHECKED_CAST")
-        val (mag, phase) = result as Pair<IntArray, IntArray>
+        val pair = result as Pair<IntArray, IntArray>
+        val mag = pair.first
+        val phase = pair.second
 
         val maxIdx = mag.indices.maxByOrNull { mag[it] }!!
         assertTrue(mag[maxIdx] > 1000, "Amplitude too small for main band")
@@ -98,8 +101,10 @@ class WkBitwisePhaseSeparatorTest {
         method.isAccessible = true
         val result = method.invoke(separator, samples)
         require(result is Pair<*, *>) { "dft8() 반환형이 Pair가 아닙니다" }
+
         @Suppress("UNCHECKED_CAST")
-        val (magDFT, _) = result as Pair<IntArray, IntArray>
+        val pair = result as Pair<IntArray, IntArray>
+        val magDFT = pair.first
 
         val (magFFT, _) = WkIntFFT.fftInt(samples)
         val dftPower = sqrt(magDFT.sumOf { it * it.toDouble() } / magDFT.size)
