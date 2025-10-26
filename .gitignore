@@ -38,6 +38,7 @@
 # Kotlin / Java / Android
 .gradle/
 .idea/
+gradle-tmp/
 build/
 out/
 local.properties
