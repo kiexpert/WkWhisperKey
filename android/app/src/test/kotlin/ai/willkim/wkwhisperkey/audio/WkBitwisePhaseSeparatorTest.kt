@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import kotlin.math.*
 import ai.willkim.wkwhisperkey.*
 
-class WkBitwisePhaseSeparatorTest {
+class WkBitwisePhaseSeparatorTest : WkTestBase() {
 
     private val separator = WkBitwisePhaseSeparatorShard.instance
     private val sampleRate = 44100
