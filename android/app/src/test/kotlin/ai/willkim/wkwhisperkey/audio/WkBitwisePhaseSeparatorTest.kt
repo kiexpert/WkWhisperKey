@@ -113,7 +113,7 @@ class WkBitwisePhaseSeparatorTest {
     
         println("---- FFT vs DFT DEBUG ----")
         println("freq=$freq, N=$N")
-        println("magDFT=${magDFT.joinToString(prefix=\"[\", postfix=\"]\", limit=8)} ...")
+        println("magDFT=${magDFT.joinToString(prefix = "[", postfix = "]", limit = 8)} ...")
         println("magFFT(first 8)=${magFFT.take(8)}")
         println("dftPower=$dftPower  fftPower=$fftPower  ratio=$ratio")
     
