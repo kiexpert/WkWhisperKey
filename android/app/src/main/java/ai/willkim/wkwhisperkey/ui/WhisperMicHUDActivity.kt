@@ -1,6 +1,7 @@
 package ai.willkim.wkwhisperkey.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.os.*
@@ -16,16 +17,13 @@ import kotlin.math.*
 class WhisperMicHUDActivity : AppCompatActivity() {
 
     private lateinit var micManager: WkMicArrayManager
-    private lateinit var separator: WkVoiceSeparator
+    private val separator = WkBitwisePhaseSeparatorShard.instance
     private val main = Handler(Looper.getMainLooper())
 
-    // ----- 분석 파라미터 -----
     private val sampleRate = 44100
     private val frameMs = 20
-    private val N = (sampleRate * frameMs / 1000.0).roundToInt()
+    private val N = (sampleRate * frameMs / 1000.0).roundToInt() + (2 * 600) // add padding for mic distance
     private val hop = N / 2
-    private val bands = doubleArrayOf(150.0, 700.0, 1100.0, 1700.0, 2500.0, 3600.0, 5200.0, 7500.0)
-
     private val ring = ShortArray(4 * N)
     private var rp = 0
     private var filled = 0
@@ -35,29 +33,46 @@ class WhisperMicHUDActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply {
+
+        val root = FrameLayout(this)
+        val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
         }
 
         val title = TextView(this).apply {
-            text = "🎤 멀티발성키 화자분리 뷰"
+            text = "🎤 비트화 위상 분리기 뷰"
             textSize = 18f
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        root.addView(title)
+        mainLayout.addView(title)
 
-        root.addView(speakerMap, LinearLayout.LayoutParams(
+        mainLayout.addView(speakerMap, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 550
         ))
 
         infoText.textSize = 13f
         infoText.setTextColor(Color.WHITE)
-        root.addView(infoText)
+        mainLayout.addView(infoText)
+
+        root.addView(mainLayout)
+
+        val profiler = WkProfilerView(this).apply {
+            setBackgroundColor(Color.argb(120, 0, 0, 0))
+            setPadding(8, 4, 8, 4)
+        }
+        root.addView(
+            profiler,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            )
+        )
+
         setContentView(root)
 
         WkSafetyMonitor.initialize(this)
-        separator = WkVoiceSeparator(sampleRate, bands)
         ensureMicPermission()
 
         micManager = WkMicArrayManager(
@@ -83,37 +98,33 @@ class WhisperMicHUDActivity : AppCompatActivity() {
     }
 
     private fun processFrame() {
-        val L = DoubleArray(N)
-        val R = DoubleArray(N)
+        val Lshort = ShortArray(N)
+        val Rshort = ShortArray(N)
         var idx = (rp - 2 * N + ring.size) % ring.size
         var j = 0
         while (j < 2 * N) {
-            val l = ring[idx].toInt(); idx = (idx + 1) % ring.size
-            val r = ring[idx].toInt(); idx = (idx + 1) % ring.size
-            L[j / 2] = l.toDouble()
-            R[j / 2] = r.toDouble()
+            val l = ring[idx]; idx = (idx + 1) % ring.size
+            val r = ring[idx]; idx = (idx + 1) % ring.size
+            Lshort[j / 2] = l
+            Rshort[j / 2] = r
             j += 2
         }
 
         try {
-            val speakers = separator.separate(L, R)
+            val speakers = separator.separate(Lshort, Rshort)
             val sorted = speakers.sortedByDescending { it.energy }.take(7)
-
             val sb = StringBuilder()
             sb.append("감지된 화자 수: ${speakers.size}\n")
             for ((i, s) in sorted.withIndex()) {
                 sb.append(
                     String.format(
-                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2fm\n",
+                        "#%-2d  E=%5.1f dB | Δ=%+4d | d=%.2f mm\n",
                         i + 1, s.energy, s.deltaIndex, s.distance
                     )
                 )
             }
             infoText.text = sb.toString()
-
-            // 화자 및 발성키 모두 지도에 전달
             speakerMap.updateSpeakers(sorted, separator.getActiveKeys())
-
         } catch (e: Exception) {
             infoText.text = "분석 오류: ${e.message}"
         }
@@ -135,5 +146,31 @@ class WhisperMicHUDActivity : AppCompatActivity() {
         super.onDestroy()
         micManager.stopAll()
         WkSafetyMonitor.stop()
+    }
+
+    class WkProfilerView(context: Context) : TextView(context), Choreographer.FrameCallback {
+        private var lastTime = System.nanoTime()
+        private var frameCount = 0
+
+        init {
+            textSize = 11f
+            setTextColor(Color.GREEN)
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+
+        override fun doFrame(frameTimeNanos: Long) {
+            frameCount++
+            val now = System.nanoTime()
+            if (now - lastTime > 1_000_000_000L) {
+                val fps = frameCount
+                val mem = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
+                val kb = mem / 1024
+                val threads = Thread.activeCount()
+                text = "FPS=$fps  MEM=${kb}KB  THR=$threads"
+                frameCount = 0
+                lastTime = now
+            }
+            Choreographer.getInstance().postFrameCallback(this)
+        }
     }
 }
