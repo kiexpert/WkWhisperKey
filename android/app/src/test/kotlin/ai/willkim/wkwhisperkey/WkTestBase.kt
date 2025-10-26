@@ -1,78 +1,72 @@
 package ai.willkim.wkwhisperkey
 
+import org.junit.jupiter.api.Assertions.fail
 import kotlin.system.measureTimeMillis
 import kotlin.math.*
-import org.junit.jupiter.api.Assertions.fail
+import java.io.File
 
-/**
- * ⚙️ WkTestBase
- * ------------------------------------------------------------
- * 윌김 테스트 환경의 표준 베이스 클래스.
- *  - 모든 stdout → stderr 자동 리디렉트
- *  - print/println/printf 표준화
- *  - assertTrue/False 확장 (콜스택 및 조건식 디버그 포함)
- *  - 실행시간 측정 measure()
- *  - FFT, 랜덤 유틸 등 공용 함수 포함
- */
 open class WkTestBase {
 
     init {
-        // ✅ 모든 System.out 출력을 stderr로 리디렉트
+        // ✅ stdout → stderr 통합
         System.setOut(System.err)
     }
 
     // ------------------------------------------------------------
-    // 🔹 출력 도우미
-    fun print(msg: Any?) {
-        System.err.print(msg)
-        System.err.flush()
-    }
-
-    fun println(msg: Any? = "") {
-        System.err.println(msg)
-        System.err.flush()
-    }
-
-    fun printf(format: String, vararg args: Any?) {
-        System.err.printf(format + "\n", *args)
-        System.err.flush()
-    }
+    // 🔹 공용 출력
+    fun print(msg: Any?) = System.err.print(msg)
+    fun println(msg: Any? = "") = System.err.println(msg)
+    fun printf(fmt: String, vararg args: Any?) = System.err.printf(fmt + "\n", *args)
 
     // ------------------------------------------------------------
-    // 🔹 타이밍 측정
-    inline fun <T> measure(label: String, block: () -> T): T {
-        lateinit var result: T
-        val elapsed = measureTimeMillis {
-            result = block()
+    // 🔹 소스라인 복원 헬퍼
+    private fun findSourceExpression(trace: StackTraceElement): String {
+        return try {
+            val path = "android/app/src/test/kotlin/ai/willkim/wkwhisperkey/" + trace.fileName
+            val file = File(path)
+            if (!file.exists()) return "(source not found)"
+            val line = file.readLines()[trace.lineNumber - 1].trim()
+            line.takeIf { it.isNotEmpty() } ?: "(empty line)"
+        } catch (e: Exception) {
+            "(unknown condition)"
         }
-        println("⏱ [$label] took ${elapsed}ms")
-        return result
     }
 
     // ------------------------------------------------------------
-    // 🔹 확장 assert: 실패시 콜스택 전체 stderr 출력
+    // 🔹 assertTrue/False (디버그 확장)
     fun assertTrue(condition: Boolean, message: String = "") {
         if (!condition) {
-            val stack = Throwable().stackTrace.drop(1)
-                .joinToString("\n  at ") { it.toString() }
-            System.err.println("❌ assertTrue failed: $message")
-            System.err.println("  Stack:\n  at $stack\n")
-            fail<String>("Assertion failed: $message")
+            val trace = Throwable().stackTrace.first { it.className.contains("Test") }
+            val srcLine = findSourceExpression(trace)
+            System.err.println("❌ assertTrue failed at ${trace.fileName}:${trace.lineNumber}")
+            System.err.println("  ↳ condition: $srcLine")
+            if (message.isNotEmpty()) System.err.println("  ↳ message: $message")
+            fail<String>("Assertion failed at ${trace.fileName}:${trace.lineNumber}")
         }
     }
 
     fun assertFalse(condition: Boolean, message: String = "") {
         if (condition) {
-            val stack = Throwable().stackTrace.drop(1)
-                .joinToString("\n  at ") { it.toString() }
-            System.err.println("❌ assertFalse failed: $message")
-            System.err.println("  Stack:\n  at $stack\n")
-            fail<String>("Assertion failed: $message")
+            val trace = Throwable().stackTrace.first { it.className.contains("Test") }
+            val srcLine = findSourceExpression(trace)
+            System.err.println("❌ assertFalse failed at ${trace.fileName}:${trace.lineNumber}")
+            System.err.println("  ↳ condition: $srcLine")
+            if (message.isNotEmpty()) System.err.println("  ↳ message: $message")
+            fail<String>("Assertion failed at ${trace.fileName}:${trace.lineNumber}")
         }
     }
 
     // ------------------------------------------------------------
-    // 🔹 간단 FFT 유틸 (디버그용)
+    // 🔹 실행 시간 측정
+    inline fun <T> measure(label: String, block: () -> T): T {
+        var r: T? = null
+        val t = measureTimeMillis { r = block() }
+        println("⏱ [$label] took ${t}ms")
+        return r as T
+    }
+
+    // ------------------------------------------------------------
+    // 🔹 간단 FFT
     fun fftInt(samples: IntArray): Pair<DoubleArray, DoubleArray> {
         val n = samples.size
         val re = DoubleArray(n) { samples[it].toDouble() }
@@ -117,7 +111,7 @@ open class WkTestBase {
     }
 
     // ------------------------------------------------------------
-    // 🔹 랜덤 샘플 유틸
+    // 🔹 랜덤 신호 생성
     fun randomSignal(n: Int, amplitude: Int = 16000): IntArray =
         IntArray(n) { (sin(2 * Math.PI * 440 * it / 44100) * amplitude).toInt() }
 }
