@@ -51,7 +51,7 @@ open class WkTestBase {
 
     // ------------------------------------------------------------
     // 🔹 확장 assert: 실패시 콜스택 전체 stderr 출력
-    fun assertTrueDbg(condition: Boolean, message: String = "") {
+    fun assertTrue(condition: Boolean, message: String = "") {
         if (!condition) {
             val stack = Throwable().stackTrace.drop(1)
                 .joinToString("\n  at ") { it.toString() }
@@ -61,7 +61,7 @@ open class WkTestBase {
         }
     }
 
-    fun assertFalseDbg(condition: Boolean, message: String = "") {
+    fun assertFalse(condition: Boolean, message: String = "") {
         if (condition) {
             val stack = Throwable().stackTrace.drop(1)
                 .joinToString("\n  at ") { it.toString() }
