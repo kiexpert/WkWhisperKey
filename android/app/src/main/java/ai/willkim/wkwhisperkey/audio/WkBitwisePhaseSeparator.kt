@@ -38,8 +38,8 @@ data class WkPhaseSignal(
 )
 
 class WkBitwisePhaseSeparator(
-    private val sampleRate: Int,
-    private val bands: IntArray
+    internal val sampleRate: Int,
+    internal val bands: IntArray
 ) {
     companion object {
         private const val SPEED_OF_SOUND = 343.0
@@ -63,7 +63,7 @@ class WkBitwisePhaseSeparator(
         private const val TABLE_SIZE = 4096
 
         // ---- 정수형 SIN 테이블 ----
-        private val SIN_TABLE = ShortArray(TABLE_SIZE).apply {
+        @JvmStatic internal val SIN_TABLE = ShortArray(TABLE_SIZE).apply {
             for (i in indices) {
                 val rad = (i.toDouble() / TABLE_SIZE) * 2 * Math.PI
                 this[i] = (sin(rad) * Short.MAX_VALUE).toInt().toShort()
@@ -80,7 +80,7 @@ class WkBitwisePhaseSeparator(
             ((freq * TABLE_SIZE.toLong()) / sampleRate).toInt()
 
         // ---- 위상 정합 검사 ----
-        private inline fun isPhaseMatchedInt(
+        @JvmStatic internal inline fun isPhaseMatchedInt(
             bandΔ: Int, speakerΔ: Int, λ: Int, mouthRadiusBits: Int
         ): Boolean {
             val mask = mouthRadiusBits - 1
