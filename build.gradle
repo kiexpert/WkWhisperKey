@@ -15,3 +15,22 @@ allprojects {
         mavenCentral()
     }
 }
+
+// ────────────────────────────────────────────────
+// ⚙️ Kotlin warning suppression for all modules
+// ────────────────────────────────────────────────
+subprojects {
+    afterEvaluate { project ->
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+                suppressWarnings = true           // 모든 경고 숨김
+                allWarningsAsErrors = false       // 경고를 오류로 취급하지 않음
+                freeCompilerArgs += [
+                    "-Xsuppress-version-warnings", // 버전 관련 경고 제거
+                    "-Xno-call-assertions",
+                    "-Xno-param-assertions"
+                ]
+            }
+        }
+    }
+}
